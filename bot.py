@@ -13,9 +13,10 @@ EC2_HOST = os.getenv("EC2_HOST")
 EC2_USERNAME = os.getenv("EC2_USERNAME")
 EC2_KEY_PATH = os.getenv("EC2_KEY_PATH")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
 APPS_TO_MONITOR = [
-    {"name": "myapp", "url": f"http://{EC2_HOST}/health", "rollback_cmd": "docker stop myapp && docker rm myapp && docker run -d --name myapp myapp:stable"}
+    {"name": "myapp", "url": f"http://{EC2_HOST}/health", "rollback_cmd": "docker stop myapp && docker rm myapp && docker run -d --name myapp myapp:stable", "repo_name": "a-juchacz/flask-gitops-ec2-deploy"}
 ]
 
 llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0.2)
@@ -30,6 +31,9 @@ prompt_template = ChatPromptTemplate.from_messages([
 chain = prompt_template | llm | StrOutputParser()
 
 async def poll_loop():
+    print("hello")
+    fix_last_commit(APPS_TO_MONITOR[0])
+    '''
     while True:
         for app in APPS_TO_MONITOR:
             try:
@@ -43,6 +47,7 @@ async def poll_loop():
             except Exception as e:
                 fetch_docker_logs(app)
         await asyncio.sleep(5)
+    '''
 
 def fetch_docker_logs(app):
     ssh = paramiko.SSHClient()
@@ -66,6 +71,8 @@ def fetch_docker_logs(app):
     if decision.lower() == "yes":
         print(f"[!] Triggering rollback for {app['name']}")
         rollback_app(app)
+        # TODO: uncomment
+        #fix_last_commit(app)
     else:
         print(f"[OK] No rollback needed for {app['name']}")
 
@@ -92,3 +99,30 @@ def rollback_app(app):
 def analyze_logs_with_gemini(logs: str) -> str:
     result = chain.invoke({"log_content": logs})
     return result.strip()
+
+def fix_last_commit(app):
+    repo_name = app["repo_name"]
+    url = f"https://api.github.com/repos/{repo_name}/commits/main"
+    
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "Python/httpx",
+        "Authorization": f"Bearer {GITHUB_TOKEN}"
+    }
+    
+    try:
+        response = httpx.get(url, headers=headers)
+        if response.status_code == 200:
+            commit_data = response.json()
+            commit_sha = commit_data["sha"]
+            commit_message = commit_data["commit"]["message"]
+            print(f"[INFO] Latest commit in main: {commit_sha}")
+            print(f"[INFO] Commit message: {commit_message}")
+            return commit_sha
+        else:
+            print(f"[ERROR] Failed to fetch commit data: {response.status_code}")
+            print(f"[ERROR] Response: {response.text}")
+            return None
+    except Exception as e:
+        print(f"[ERROR] Error fetching commit data: {str(e)}")
+        return None

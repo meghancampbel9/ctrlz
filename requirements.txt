@@ -1,9 +1,11 @@
 fastapi
+python-dotenv
 httpx
-pyjwt
-python-dotenv
-uvicorn
+PyJWT
 langchain
-langchain-community
 langchain-google-genai
-python-dotenv
+langchain-community
+langchain-text-splitters
+supabase
+GitPython
+tiktoken

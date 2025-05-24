@@ -4,7 +4,7 @@ import hashlib
 import time
 import httpx
 import jwt
-from fastapi import FastAPI, Request, Header, HTTPException
+from fastapi import FastAPI, Request, Header, HTTPException, BackgroundTasks
 from dotenv import load_dotenv
 import json
 from pathlib import Path
@@ -12,6 +12,8 @@ from zipfile import ZipFile
 from io import BytesIO
 from langchain_community.document_loaders import TextLoader
 from agents import LogAnalyzer
+from supabase_service import check_if_repo_indexed
+from repository_indexer import process_repository
 
 load_dotenv()
 
@@ -146,6 +148,7 @@ async def read_file_from_repo(owner, repo, path, ref, installation_id):
 @app.post("/api/webhook")
 async def github_webhook(
     request: Request,
+    background_tasks: BackgroundTasks,
     x_github_event: str = Header(None),
     x_hub_signature_256: str = Header(None)
 ):
@@ -163,14 +166,66 @@ async def github_webhook(
     # It's good practice to ensure these are present early if they are essential for all or most events.
     # For now, specific checks are done within event handlers if an operation depends on them.
 
-    if x_github_event == "push":
-        if owner and repo_name:
-            print(f"[push] New commit(s) pushed to {owner}/{repo_name}:")
+    if x_github_event == "installation" and payload.get("action") in ["created", "new_permissions_accepted"]:
+        installation_id = payload.get("installation", {}).get("id")
+        if payload.get("repositories"):
+            for repo_data in payload.get("repositories", []):
+                repo_full_name = repo_data.get("full_name") # e.g., "owner/repo"
+                if repo_full_name and installation_id:
+                    r_owner, r_name = repo_full_name.split('/')
+                    repo_url = f"https://github.com/{repo_full_name}.git"
+                    print(f"[installation created/permissions accepted] Processing repository: {repo_full_name}")
+                    # Get token for this specific installation to clone
+                    install_token = await get_installation_access_token(installation_id)
+                    background_tasks.add_task(process_repository, repo_url, repo_full_name, r_owner, r_name, installation_token=install_token)
+        else: # All repositories selected for the installation
+            # This case is harder to handle directly as it doesn't list all repos here.
+            # Best to rely on `installation_repositories` or have user trigger indexing manually.
+            # Or, you could list all repos for the installation via API if this event is critical.
+            print(f"[installation created/permissions accepted] App installed on all repositories for {payload.get('installation', {}).get('account', {}).get('login')}. Consider using 'installation_repositories' event for individual repo processing or manual trigger.")
+
+    elif x_github_event == "installation_repositories" and payload.get("action") == "added":
+        installation_id = payload.get("installation", {}).get("id")
+        if payload.get("repositories_added"):
+            for repo_data in payload.get("repositories_added", []):
+                repo_full_name = repo_data.get("full_name") # e.g., "owner/repo"
+                if repo_full_name and installation_id:
+                    r_owner, r_name = repo_full_name.split('/')
+                    repo_url = f"https://github.com/{repo_full_name}.git"
+                    print(f"[installation_repositories added] Processing repository: {repo_full_name}")
+                    install_token = await get_installation_access_token(installation_id)
+                    background_tasks.add_task(process_repository, repo_url, repo_full_name, r_owner, r_name, installation_token=install_token)
+
+    elif x_github_event == "push":
+        repo_info = payload.get("repository", {}) # Ensure repo_info is always accessed first
+        owner = repo_info.get("owner", {}).get("login")
+        repo_name = repo_info.get("name")
+        installation_id = payload.get("installation", {}).get("id") # May not always be present for all push types
+
+        ref_payload = payload.get("ref", "")
+        target_branch = ref_payload.split("/")[-1] if ref_payload else ""
+        default_branch = repo_info.get("default_branch")
+        
+        # Condition 1: Push to default branch (triggers re-indexing)
+        # Requires owner, repo_name, installation_id, and branches to be valid
+        if owner and repo_name and installation_id and target_branch and default_branch and target_branch == default_branch:
+            print(f"[push] Push to default branch {default_branch} of {owner}/{repo_name}")
+            repo_full_name = f"{owner}/{repo_name}"
+            repo_url = f"https://github.com/{repo_full_name}.git"
+            print(f"[push] Triggering re-indexing for {repo_full_name}.")
+            install_token = await get_installation_access_token(installation_id)
+            background_tasks.add_task(process_repository, repo_url, repo_full_name, owner, repo_name, branch=default_branch, installation_token=install_token)
+        
+        # Condition 2: Generic push message (logs commits), if not a default branch push or if missing details for re-indexing
+        elif owner and repo_name: 
+            print(f"[push] New commit(s) pushed to {owner}/{repo_name} (branch: {target_branch}):")
             commits = payload.get("commits", [])
             for commit in commits:
                 print(f"  - {commit.get('id')[:7]}: {commit.get('message')}")
+        
+        # Condition 3: Incomplete information for any meaningful push processing
         else:
-            print("[push] Received push event with incomplete repository information.")
+            print("[push] Received push event with incomplete repository/owner information.")
 
     elif x_github_event == "workflow_run":
         action = payload.get("action")

@@ -36,6 +36,21 @@ deployment_prompt = ChatPromptTemplate.from_messages([
 ])
 deployment_chain = deployment_prompt | llm | StrOutputParser()
 
+fix_commit_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a DevOps expert. Your job is to fix broken code changes based on Docker logs and commit details."),
+    ("user", (
+        "The following commit caused a deployment failure. "
+        "Here are the details:\n\n"
+        "Commit SHA: {commit_sha}\n"
+        "Commit Message: {commit_message}\n"
+        "Files Changed:\n{files_changed}\n\n"
+        "Docker Logs:\n{logs}\n\n"
+        "Please provide a fixed version of the commit. "
+        "Output the corrected code changes as a unified diff, or describe the necessary changes if a diff is not possible."
+    )),
+])
+fix_commit_chain = fix_commit_prompt | llm | StrOutputParser()
+
 def analyze_deployment_with_gemini(commit_sha: str, commit_message: str, commit_details: dict) -> str:
     logs = fetch_deployment_logs()
     try:
@@ -77,6 +92,32 @@ def analyze_deployment_with_gemini(commit_sha: str, commit_message: str, commit_
         return result.strip()
     except Exception as e:
         print(f"[ERROR] Exception during Gemini analysis: {e}")
+        return "Error"
+
+def generate_fixed_commit_with_gemini(commit_sha: str, commit_message: str, commit_details: dict) -> str:
+    logs = fetch_deployment_logs()
+    try:
+        files_changed = []
+        for file in commit_details["files"]:
+            file_info = f"- {file['filename']} ({file['status']})"
+            if file['patch']:
+                file_info += f"\n  Changes: {file['patch'][:200]}..."  # Truncate long patches
+            files_changed.append(file_info)
+        files_changed_str = "\n".join(files_changed)
+
+        print("About to call Gemini for commit fix suggestion...")
+        result = fix_commit_chain.invoke({
+            "commit_sha": commit_sha,
+            "commit_message": commit_message,
+            "files_changed": files_changed_str,
+            "logs": logs
+        })
+        print("Gemini call complete.")
+        print("\n[INFO] Gemini's Fix Suggestion:\n", result)
+        print("-" * 50)
+        return result.strip()
+    except Exception as e:
+        print(f"[ERROR] Exception during Gemini commit fix: {e}")
         return "Error"
 
 def get_github_commit_info(repo_name: str, branch: str = "main") -> tuple[str | None, str | None, dict | None]:
@@ -149,10 +190,10 @@ def fix_last_commit(app):
     if commit_sha and commit_details:
         print_commit_details(commit_sha, commit_message, commit_details)
         
-        # Analyze deployment with Gemini
-        print("\n[INFO] Analyzing deployment with Gemini...")
-        deployment_analysis = analyze_deployment_with_gemini(commit_sha, commit_message, commit_details)
-        print(f"[INFO] Deployment Analysis: {deployment_analysis}")
+        # Generate fixed commit with Gemini
+        print("\n[INFO] Generating fixed commit with Gemini...")
+        fixed_diff = generate_fixed_commit_with_gemini(commit_sha, commit_message, commit_details)
+        print(f"[INFO] Gemini's Fixed Commit Suggestion:\n{fixed_diff}")
         
         return commit_sha
     return None 

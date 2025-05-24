@@ -111,6 +111,7 @@ def fix_last_commit(app):
     }
     
     try:
+        # Get the latest commit
         response = httpx.get(url, headers=headers)
         if response.status_code == 200:
             commit_data = response.json()
@@ -118,6 +119,21 @@ def fix_last_commit(app):
             commit_message = commit_data["commit"]["message"]
             print(f"[INFO] Latest commit in main: {commit_sha}")
             print(f"[INFO] Commit message: {commit_message}")
+            
+            # Get the commit details including diff
+            commit_url = f"https://api.github.com/repos/{repo_name}/commits/{commit_sha}"
+            commit_response = httpx.get(commit_url, headers=headers)
+            if commit_response.status_code == 200:
+                commit_details = commit_response.json()
+                print("\n[INFO] Code changes in this commit:")
+                for file in commit_details["files"]:
+                    print(f"\nFile: {file['filename']}")
+                    print(f"Status: {file['status']}")
+                    if file['patch']:
+                        print("Changes:")
+                        print(file['patch'])
+                    print("-" * 50)
+            
             return commit_sha
         else:
             print(f"[ERROR] Failed to fetch commit data: {response.status_code}")

@@ -41,7 +41,6 @@ async def poll_loop():
                     else:
                         print(f"[OK] {app['name']} is healthy")
             except Exception as e:
-                print(f"[!] Error checking {app['name']}: {e}")
                 fetch_docker_logs(app)
         await asyncio.sleep(5)
 
@@ -53,17 +52,15 @@ def fetch_docker_logs(app):
         username=EC2_USERNAME,
         key_filename=EC2_KEY_PATH
     )
-
     cmd = f"docker logs {app['name']}"
     stdin, stdout, stderr = ssh.exec_command(cmd)
     logs = stdout.read().decode()
     error = stderr.read().decode()
     ssh.close()
 
-    if error and not logs:
-        raise RuntimeError(f"Failed to fetch logs: {error}")
-
+    print("2")
     decision = analyze_logs_with_gemini(logs)
+    print(f"DECISION: {decision}")
     print(f"[Gemini Decision] Code issue in {app['name']}: {decision}")
 
     if decision.lower() == "yes":
@@ -82,7 +79,14 @@ def rollback_app(app):
         username=EC2_USERNAME,
         key_filename=EC2_KEY_PATH
     )
-    ssh.exec_command(app["rollback_cmd"])
+
+    rollback_cmd = (
+        f"docker stop {app['name']} || true && "
+        f"docker rm {app['name']} || true && "
+        f"docker run -d --name {app['name']} -p 80:80 {app['name']}:stable"
+    )
+
+    ssh.exec_command(rollback_cmd)
     ssh.close()
 
 def analyze_logs_with_gemini(logs: str) -> str:

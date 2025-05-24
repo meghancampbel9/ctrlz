@@ -89,7 +89,7 @@ async def fetch_docker_logs_and_status(app):
     return status, exit_code, logs
 
 async def restart_latest(app):
-    print(f"[ACTION] Restarting latest image for {app['name']} (if needed)...")
+    print(f"[ACTION] Restarting latest image for {app['name']} (if needed)")
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     ssh.connect(hostname=EC2_HOST, username=EC2_USERNAME, key_filename=EC2_KEY_PATH)
@@ -99,7 +99,7 @@ async def restart_latest(app):
       docker rm {app['name']} || true
       docker pull {LATEST_IMAGE} || true
       docker run -d --name {app['name']} -p 80:80 {LATEST_IMAGE} || true
-    """    
+    """
     ssh.exec_command(restart_cmd)
     print(f"[INFO] Restart command executed for {app['name']}.")
     ssh.close()
@@ -141,7 +141,7 @@ async def poll_loop():
                         if exit_code in (0, 1):
                             #await restart_stable(app)
                             health_response = await get_health_response(app)
-                            code_text = read_file_contents("bot.py")
+                            code_text = read_file_contents("app.py") #Fixed filename
                             diagnosis = await analyze_failure(health_response, logs, code_text)
 
                             patch = clean_patch(diagnosis)
@@ -169,7 +169,7 @@ async def poll_loop():
                 status, exit_code, logs = await fetch_docker_logs_and_status(app)
                 if exit_code in (0,1):
                     
-                    health_response = await get_health_response(app)                    
+                    health_response = await get_health_response(app)
                     code_text = read_file_contents("bot.py")
                     diagnosis = await analyze_failure(health_response, logs, code_text)
 
@@ -193,10 +193,11 @@ def apply_patch_and_push_branch(patch_path="suggested_fix.patch", repo_path=".")
     print(f"[INFO] Creating branch: {branch_name}")
 
     try:
-        subprocess.run(["git", "apply", patch_path], check=True, cwd=repo_path)
+        with open(patch_path, 'r') as f:
+            patch = f.read()
+        subprocess.run(["git", "apply"], input=patch.encode(), check=True, cwd=repo_path)
         print("[INFO] Patch applied successfully.")
-
-        subprocess.run(["git", "checkout", "-b", branch_name], check=True, cwd=repo_path)
+        subprocess.run(["git", "checkout", "-b", branch_name], capture_output=True, text=True, check=True, cwd=repo_path)
 
         subprocess.run(["git", "add", "."], check=True, cwd=repo_path)
         subprocess.run(["git", "commit", "-m", "Auto-generated health check fix"], check=True, cwd=repo_path)
@@ -209,10 +210,10 @@ def apply_patch_and_push_branch(patch_path="suggested_fix.patch", repo_path=".")
         return None
 
 def clean_patch(patch_text: str) -> str:
-    clean_lines = []
-    for line in lines:
+    lines = patch_text.splitlines()
+    clean_lines = [line for line in lines if not line.startswith("```")]
         if line.startswith("```"):
-            continue
+            clean_lines.append("")
         clean_lines.append(line)
     return "\n".join(clean_lines)
 
@@ -220,7 +221,7 @@ def create_pull_request(branch_name: str, patch_summary: str = "Auto-fix: health
     import json
 
     token = os.getenv("GITHUB_TOKEN")
-    repo = "a-juchaczkombo/hackathon-demo-app"
+    repo = os.getenv("GITHUB_REPO")
     base_branch = "main"
 
     if not all([token, repo, branch_name]):
@@ -243,6 +244,7 @@ def create_pull_request(branch_name: str, patch_summary: str = "Auto-fix: health
     print("[INFO] Waiting for branch to propagate...")
     time.sleep(10)
 
+    import time
     response = requests.post(url, json=data, headers=headers)
     if response.status_code == 201:
         print(f"[✅] Pull request created: {response.json()['html_url']}")

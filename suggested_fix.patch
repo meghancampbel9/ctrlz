@@ -1,67 +1,59 @@
 ```diff
 --- a/bot.py
 +++ b/bot.py
-@@ -77,7 +77,7 @@
+@@ -100,7 +100,7 @@
      return status, exit_code, logs
  
  async def restart_latest(app):
--    print(f"[ACTION] Restarting latest image for {app['name']}...")
-+    print(f"[ACTION] Restarting latest image for {app['name']} with docker run command...")
+-    print(f"[ACTION] Restarting latest image for {app['name']} with docker run command...")
++    print(f"[ACTION] Restarting latest image for {app['name']}")
      ssh = paramiko.SSHClient()
      ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
      ssh.connect(hostname=EC2_HOST, username=EC2_USERNAME, key_filename=EC2_KEY_PATH)
-@@ -85,7 +85,7 @@
-     restart_cmd = f"""
+@@ -110,7 +110,7 @@
        docker stop {app['name']} || true
        docker rm {app['name']} || true
--      docker pull {LATEST_IMAGE}
-+      docker pull {LATEST_IMAGE} || true
-       docker run -d --name {app['name']} -p 80:80 {LATEST_IMAGE}
+       docker pull {LATEST_IMAGE} || true
+-      docker run -d --name {app['name']} -p 80:80 {LATEST_IMAGE}
++      docker run -d --name {app['name']} -p 80:80 {LATEST_IMAGE} || true
      """
      ssh.exec_command(restart_cmd)
-@@ -100,7 +100,7 @@
-     ssh.connect(hostname=EC2_HOST, username=EC2_USERNAME, key_filename=EC2_KEY_PATH)
+     print(f"[INFO] Restart command executed for {app['name']}.")
+@@ -125,7 +125,7 @@
  
      restart_cmd = (
--        f"docker stop {app['name']} || true && "
-+        f"docker stop {app['name']} || true && " #Fixed typo here
-         f"docker rm {app['name']} || true && "
+         f"docker stop {app['name']} || true && " #Fixed typo here
+-        f"docker rm {app['name']} || true && "
++        f"docker rm {app['name']} || true && " 
          f"docker run -d --name {app['name']} -p 80:80 {STABLE_IMAGE}"
      )
-@@ -115,7 +115,7 @@
+     ssh.exec_command(restart_cmd)
+@@ -140,7 +140,7 @@
              r = await client.get(app["url"])
              return f"{r.status_code} {r.text}"
      except Exception as e:
--        return f"ERROR: {str(e)}"
-+        return f"ERROR: {e}"
+-        return f"ERROR: {e}"
++        return f"ERROR: {e} - Check if the application is running and listening on port 80"
  
  async def poll_loop():
      while True:
-@@ -124,7 +124,7 @@
-                 async with httpx.AsyncClient(timeout=5) as client:
+@@ -150,7 +150,7 @@
                      r = await client.get(app["url"], timeout=5)
                      if r.status_code != 200:
--                        print(f"[!] Health check failed for {app['name']}, analyzing...")
-+                        print(f"[!] Health check failed for {app['name']} (HTTP {r.status_code}), analyzing...")
-                         status, exit_code, logs = await fetch_docker_logs_and_status(app)
+                         print(f"[!] Health check failed for {app['name']} (HTTP {r.status_code}), analyzing...")
+-                        status, exit_code, logs = await fetch_docker_logs_and_status(app)
++                        status, exit_code, logs = await fetch_docker_logs_and_status(app) 
  
                          if exit_code in (0, 1):
-@@ -148,7 +148,7 @@
-                     else: 
-                         print(f"[OK] {app['name']} is healthy")
+                             #await restart_stable(app)
+@@ -176,7 +176,7 @@
              except Exception as e:
--                print(f"[ERROR] Exception occurred: {e}. Checking container state...")
-+                print(f"[ERROR] Exception occurred during health check: {e}. Checking container state...")
+                 print(f"[ERROR] Exception occurred during health check: {e}. Checking container state...")
                  status, exit_code, logs = await fetch_docker_logs_and_status(app)
-                 if exit_code in (0, 1):
+-                if exit_code in (0, 1):
++                if exit_code in (0,1):
                      #await restart_stable(app)
-@@ -170,6 +170,7 @@
- 
- def apply_patch_and_push_branch(patch_path="suggested_fix.patch", repo_path="."):
-     branch_name = f"auto-fix-health-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
-+    print(f"[INFO] Creating branch: {branch_name}")
- 
-     try:
-         subprocess.run(["git", "apply", patch_path], check=True, cwd=repo_path)
+                     health_response = await get_health_response(app)
+                     code_text = read_file_contents("bot.py")
 
 ```

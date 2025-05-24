@@ -7,6 +7,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema.output_parser import StrOutputParser
 import subprocess
+import json
 import os
 import datetime
 import requests
@@ -88,7 +89,7 @@ async def fetch_docker_logs_and_status(app):
     return status, exit_code, logs
 
 async def restart_latest(app):
-    print(f"[ACTION] Restarting latest image for {app['name']} (attempting to fix health check failure)...")
+    print(f"[ACTION] Restarting latest image for {app['name']} (if needed)...")
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     ssh.connect(hostname=EC2_HOST, username=EC2_USERNAME, key_filename=EC2_KEY_PATH)
@@ -97,14 +98,14 @@ async def restart_latest(app):
       docker stop {app['name']} || true
       docker rm {app['name']} || true
       docker pull {LATEST_IMAGE} || true
-      docker run -d --name {app['name']} -p 80:80 --restart=always {LATEST_IMAGE} || true
+      docker run -d --name {app['name']} -p 80:80 {LATEST_IMAGE} || true
     """    
     ssh.exec_command(restart_cmd)
     print(f"[INFO] Restart command executed for {app['name']}.")
     ssh.close()
 
 async def restart_stable(app): #This function is not used currently
-    print(f"[ACTION] Restarting stable image for {app['name']}")
+    print(f"[ACTION] Restarting stable image for {app['name']} (if needed)")
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     ssh.connect(hostname=EC2_HOST, username=EC2_USERNAME, key_filename=EC2_KEY_PATH)
@@ -122,7 +123,7 @@ async def restart_stable(app): #This function is not used currently
 async def get_health_response(app) -> str:
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.get(app["url"])
+            r = await client.get(app["url"], timeout=5)
             return f"{r.status_code} {r.text}"
     except Exception as e:
         return f"ERROR: {e} - Check if the application is running and listening on port 80"
@@ -132,20 +133,20 @@ async def poll_loop():
         for app in APPS_TO_MONITOR:
             try:
                 async with httpx.AsyncClient(timeout=5) as client:
-                    r = await client.get(app["url"], timeout=5)
+                    r = await client.get(app["url"])
                     if r.status_code != 200:
                         print(f"[!] Health check failed for {app['name']} (HTTP {r.status_code}), analyzing...")
                         status, exit_code, logs = await fetch_docker_logs_and_status(app) 
                         
                         if exit_code in (0, 1):
-                            
+                            #await restart_stable(app)
                             health_response = await get_health_response(app)
-                            code_text = read_file_contents("bot.py")  # adjust path if needed
+                            code_text = read_file_contents("bot.py")
                             diagnosis = await analyze_failure(health_response, logs, code_text)
 
                             patch = clean_patch(diagnosis)
                             with open("suggested_fix.patch", "w") as f:
-                                f.write(diagnosis)
+                                f.write(patch)
 
                             branch = apply_patch_and_push_branch()
                             if branch:
@@ -167,13 +168,14 @@ async def poll_loop():
                 print(f"[ERROR] Exception occurred during health check: {e}. Checking container state...")
                 status, exit_code, logs = await fetch_docker_logs_and_status(app)
                 if exit_code in (0,1):
-
-                    health_response = await get_health_response(app)
+                    
+                    health_response = await get_health_response(app)                    
                     code_text = read_file_contents("bot.py")
                     diagnosis = await analyze_failure(health_response, logs, code_text)
 
+                    patch = clean_patch(diagnosis)
                     with open("suggested_fix.patch", "w") as f:
-                        f.write(diagnosis)
+                        f.write(patch)
 
                     branch = apply_patch_and_push_branch()
                     if branch:
@@ -186,6 +188,7 @@ async def poll_loop():
         await asyncio.sleep(30) #Increased sleep time to allow for container restart and health check
 
 def apply_patch_and_push_branch(patch_path="suggested_fix.patch", repo_path="."):
+
     branch_name = f"auto-fix-health-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
     print(f"[INFO] Creating branch: {branch_name}")
 
@@ -193,7 +196,6 @@ def apply_patch_and_push_branch(patch_path="suggested_fix.patch", repo_path=".")
         subprocess.run(["git", "apply", patch_path], check=True, cwd=repo_path)
         print("[INFO] Patch applied successfully.")
 
-        subprocess.run(["git", "add", "."], check=True, cwd=repo_path)
         subprocess.run(["git", "checkout", "-b", branch_name], check=True, cwd=repo_path)
 
         subprocess.run(["git", "add", "."], check=True, cwd=repo_path)
@@ -207,7 +209,6 @@ def apply_patch_and_push_branch(patch_path="suggested_fix.patch", repo_path=".")
         return None
 
 def clean_patch(patch_text: str) -> str:
-    lines = patch_text.splitlines()
     clean_lines = []
     for line in lines:
         if line.startswith("```"):
@@ -216,7 +217,6 @@ def clean_patch(patch_text: str) -> str:
     return "\n".join(clean_lines)
 
 def create_pull_request(branch_name: str, patch_summary: str = "Auto-fix: health check improvement"):
-    import time #This import is already present in the file
     import json
 
     token = os.getenv("GITHUB_TOKEN")
@@ -241,7 +241,7 @@ def create_pull_request(branch_name: str, patch_summary: str = "Auto-fix: health
     }
 
     print("[INFO] Waiting for branch to propagate...")
-    time.sleep(5)
+    time.sleep(10)
 
     response = requests.post(url, json=data, headers=headers)
     if response.status_code == 201:

@@ -10,6 +10,17 @@ load_dotenv()
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
+def fetch_deployment_logs() -> str:
+    """
+    Fetches the contents of deployment_logs/logs.txt and returns it as a string.
+    """
+    try:
+        with open("deployment_logs/logs.txt", "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        print(f"[ERROR] Could not read deployment logs: {e}")
+        return ""
+
 llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0.2)
 deployment_prompt = ChatPromptTemplate.from_messages([
     ("system", "You are a DevOps expert analyzing code changes for potential deployment issues."),
@@ -18,17 +29,15 @@ deployment_prompt = ChatPromptTemplate.from_messages([
         "Commit SHA: {commit_sha}\n"
         "Commit Message: {commit_message}\n"
         "Files Changed:\n{files_changed}\n\n"
-        "Based on the changes above, are there any potential deployment issues? "
+        "Deployment Logs:\n{logs}\n\n"
+        "Based on the changes and logs above, are there any potential deployment issues? "
         "Respond with only 'Yes' or 'No'."
     )),
 ])
 deployment_chain = deployment_prompt | llm | StrOutputParser()
 
 def analyze_deployment_with_gemini(commit_sha: str, commit_message: str, commit_details: dict) -> str:
-    """
-    Analyze code changes using Gemini to identify potential deployment issues.
-    Returns 'Yes' or 'No' indicating if there are potential issues.
-    """
+    logs = fetch_deployment_logs()
     try:
         # Format the files changed for the prompt
         files_changed = []
@@ -45,7 +54,8 @@ def analyze_deployment_with_gemini(commit_sha: str, commit_message: str, commit_
         result = deployment_chain.invoke({
             "commit_sha": commit_sha,
             "commit_message": commit_message,
-            "files_changed": files_changed_str
+            "files_changed": files_changed_str,
+            "logs": logs
         })
         print("Gemini call complete.")
         
@@ -56,6 +66,8 @@ def analyze_deployment_with_gemini(commit_sha: str, commit_message: str, commit_
         print(f"Commit Message: {commit_message}")
         print("Files Changed:")
         print(files_changed_str)
+        print("Logs:")
+        print(logs)
         print("\nGemini's Response:")
         print(result)
         print("-" * 50)

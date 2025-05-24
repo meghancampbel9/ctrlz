@@ -6,3 +6,4 @@ uvicorn
 paramiko
 openai
 dotenv
+google

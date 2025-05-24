@@ -12,9 +12,9 @@ EC2_USERNAME = os.getenv("EC2_USERNAME")
 EC2_KEY_PATH = os.getenv("EC2_KEY_PATH")
 
 APPS_TO_MONITOR = [
-    {"name": "myapp", "url": "http://3.76.115.47/health", "rollback_cmd": "docker start myapp-good"}
+    {"name": "myapp", "url": f"{EC2_HOST}/health", "rollback_cmd": "docker start myapp-good"}
 ]
-openai.api_key = os.getenv("OPENAI_API_KEY")  # or hardcode for testing
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 async def poll_loop():
     while True:

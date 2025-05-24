@@ -15,7 +15,6 @@ class LogAnalyzer:
         Args:
             model_name (str): The name of the Gemini model to use.
             temperature (float): The temperature for the LLM's generation.
-                                 Lower values make the output more deterministic.
         """
         try:
             self.llm = ChatGoogleGenerativeAI(model=model_name, temperature=temperature)
@@ -24,23 +23,36 @@ class LogAnalyzer:
             print("Please ensure your GOOGLE_API_KEY is correctly set in the .env file and valid.")
             raise
 
-        # Detailed prompt for log analysis
         self.prompt_template = ChatPromptTemplate.from_messages([
-            ("system", ("""You are an expert log analysis agent. Your primary task is to analyze the provided logs from a failed software deployment or CI/CD workflow.
-You must perform the following actions:
-1.  Carefully examine all provided log files to identify error messages, failure indicators, exceptions, and any anomalous behavior.
-2.  Determine the most likely primary root cause of the failure. If there are multiple contributing factors, explain their relationship.
-3.  Provide a detailed, technical, step-by-step analysis of what went wrong. Reference specific log files or step names if they are discernible from the log content (e.g., 'In 03_deploy.txt, the connection timed out...').
-4.  Extract and quote the **exact log lines** (verbatim) that are most critical for understanding the error and its immediate context. Ensure these quotes are clearly demarcated.
-5.  If possible, based strictly on the log information, suggest general areas to investigate or common types of fixes for the identified root cause (e.g., 'Check network connectivity to the deployment server,' or 'Verify database credentials'). Do not invent solutions not supported by the logs.
-Present your final analysis in a clear, structured, and actionable format.""")),
-            ("user", ("""Please analyze the following workflow logs:
+            ("system", ("""Your SOLE task is to generate a structured Markdown output based on the provided logs. This output will be used as a direct prompt for another AI agent called CodeFixer.
+
+You MUST ONLY output the Markdown structure described below. NOTHING ELSE.
+Your response MUST begin *immediately* with `## Problem Statement` and adhere strictly to this format:
+
+## Problem Statement
+[Concisely describe the core code-related problem. Analyze the logs to find this. If the failure is due to an explicit command (e.g., `exit 1` in a script), state this. Example: "The workflow failed due to an `exit 1` command in the script executed during the 'Fail the pipeline' step. The CodeFixer should examine the script associated with 'deploy_9_Fail the pipeline.txt' and, if this failure is not intended for testing, remove or modify the 'exit 1' command."]
+
+## Key Log Snippets
+[Internally identify the most critical log lines for understanding the error and its context. Then, quote these exact, verbatim log lines. Preserve formatting. Use a Markdown code block.]
+
+## Suspected Files/Components
+[Based on your log analysis, list any specific file names (e.g., `deploy_9_Fail the pipeline.txt` if it implies a script) or components that appear directly related to the error. If none, state "Not specifically identified in logs beyond the failing script itself." or similar.]
+
+## Additional Investigation Context (Optional)
+[If your log analysis revealed relevant context not directly code-fixable (e.g., "External service X was unresponsive"), mention it here. If there is no such context, OMIT this entire section or write "None.".]
+
+**IMPORTANT RULES FOR YOUR OUTPUT:**
+1.  Start your response *immediately* with `## Problem Statement`. No preamble.
+2.  Strictly adhere to the specified Markdown headers and structure.
+3.  Do NOT include any narrative, greetings, explanations of your analytical process, or summaries outside of the defined sections.
+4.  The content within each section should be derived from your internal analysis of the logs.
+""")),
+            ("user", ("""Analyze the following workflow logs and generate the structured Markdown prompt for CodeFixer, strictly following the format defined in the system message:
 
 ```text
 {log_content}
 ```
-
-Detailed Analysis:""")),
+""")),
         ])
         self.chain = self.prompt_template | self.llm | StrOutputParser()
 

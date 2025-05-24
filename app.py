@@ -155,69 +155,78 @@ async def github_webhook(
         raise HTTPException(status_code=401, detail="Invalid signature")
 
     payload = await request.json()
+    repo_info = payload.get("repository", {})
+    owner = repo_info.get("owner", {}).get("login")
+    repo_name = repo_info.get("name")
+    installation_id = payload.get("installation", {}).get("id")
 
-    # Handle push events (new commits)
+    # It's good practice to ensure these are present early if they are essential for all or most events.
+    # For now, specific checks are done within event handlers if an operation depends on them.
+
     if x_github_event == "push":
-        repo = payload["repository"]
-        owner = repo["owner"]["login"]
-        repo_name = repo["name"]
-        commits = payload.get("commits", [])
-        print(f"[push] New commit(s) pushed to {owner}/{repo_name}:")
-        for commit in commits:
-            print(f"  - {commit.get('id')[:7]}: {commit.get('message')}")
+        if owner and repo_name:
+            print(f"[push] New commit(s) pushed to {owner}/{repo_name}:")
+            commits = payload.get("commits", [])
+            for commit in commits:
+                print(f"  - {commit.get('id')[:7]}: {commit.get('message')}")
+        else:
+            print("[push] Received push event with incomplete repository information.")
 
-    # Handle workflow_run events
-    if x_github_event == "workflow_run":
+    elif x_github_event == "workflow_run":
         action = payload.get("action")
-        workflow_run = payload.get("workflow_run", {})
-        status = workflow_run.get("status")
-        conclusion = workflow_run.get("conclusion")
-        run_id = workflow_run.get("id")
-        repo = payload["repository"]
-        owner = repo["owner"]["login"]
-        repo_name = repo["name"]
-        installation_id = payload["installation"]["id"]
+        workflow_run_info = payload.get("workflow_run", {})
+        status = workflow_run_info.get("status")
+        conclusion = workflow_run_info.get("conclusion")
+        run_id = workflow_run_info.get("id")
 
-        # Log when workflow is started
+        if not all([action, status, run_id, owner, repo_name, installation_id]):
+            print("Error: Incomplete workflow_run payload. Skipping processing.")
+            return {"ok": False, "error": "Incomplete payload"}
+
         if action == "requested":
             print(f"Workflow run started: {run_id} in {owner}/{repo_name}")
-        # Fetch and store logs if workflow ended with a negative status
+        
         negative_conclusions = {"failure", "cancelled", "timed_out", "action_required", "stale"}
         if status == "completed" and conclusion in negative_conclusions:
             print(f"Workflow run ended with negative status '{conclusion}': {run_id} in {owner}/{repo_name}")
-            await fetch_and_store_workflow_logs(owner, repo_name, run_id, installation_id)
+            try:
+                await fetch_and_store_workflow_logs(owner, repo_name, run_id, installation_id)
+            except Exception as e:
+                print(f"Error during fetch_and_store_workflow_logs: {e}")
+                return {"ok": False, "error": "Failed to fetch/store logs"} # Stop further processing
 
-            # --- Integrate LogAnalyzer ---
             log_directory_for_analysis = Path("logs") / f"{owner}_{repo_name}" / str(run_id)
             
             if os.getenv("GOOGLE_API_KEY"):
                 try:
-                    analyzer = LogAnalyzer()
-                    analysis_result = await analyzer.async_analyze_log_directory(str(log_directory_for_analysis))
+                    log_analyzer = LogAnalyzer()
+                    # This result is now the structured prompt for CodeFixer
+                    codefixer_prompt_input = await log_analyzer.async_analyze_log_directory(str(log_directory_for_analysis))
                     
-                    print("\n========== Log Analysis Result (from app.py) ==========")
-                    print(analysis_result)
-                    print("========== End of Analysis (from app.py) ==========")
-                    # Here you would propagate analysis_result to the next agent/step
+                    print("\n========== Structured Prompt for CodeFixer (from LogAnalyzer) ==========")
+                    print(codefixer_prompt_input)
+                    print("========== End of Structured Prompt for CodeFixer ==========")
+
+                    # Next: Pass codefixer_prompt_input to CodeFixer agent
+                    if codefixer_prompt_input.startswith("Error:"):
+                        print(f"LogAnalyzer returned an error: {codefixer_prompt_input}")
+
                 except Exception as e:
                     print(f"Error during LogAnalyzer execution from app.py: {e}")
             else:
                 print("GOOGLE_API_KEY not set. Skipping LogAnalyzer.")
-            # --- End LogAnalyzer Integration ---
 
-    # Handle pull_request.opened
-    if x_github_event == "pull_request" and payload.get("action") == "opened":
-        pr = payload["pull_request"]
-        repo = payload["repository"]
-        installation_id = payload["installation"]["id"]
-        owner = repo["owner"]["login"]
-        repo_name = repo["name"]
-        issue_number = pr["number"]
-        message = "Thanks for opening a new PR! Please follow our contributing guidelines to make your PR easier to review."
-        try:
-            await post_pr_comment(owner, repo_name, issue_number, message, installation_id)
-            print(f"Commented on PR #{issue_number}")
-        except Exception as e:
-            print(f"Failed to comment: {e}")
+    elif x_github_event == "pull_request" and payload.get("action") == "opened":
+        pr_info = payload.get("pull_request", {})
+        issue_number = pr_info.get("number")
+        if owner and repo_name and installation_id and issue_number:
+            message = "Thanks for opening a new PR! Please follow our contributing guidelines to make your PR easier to review."
+            try:
+                await post_pr_comment(owner, repo_name, issue_number, message, installation_id)
+                print(f"Commented on PR #{issue_number}")
+            except Exception as e:
+                print(f"Failed to comment on PR: {e}")
+        else:
+            print("[pull_request.opened] Incomplete information to post comment.")
 
     return {"ok": True}

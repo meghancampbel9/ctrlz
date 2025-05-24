@@ -1,10 +1,69 @@
 import httpx
 import os
 from dotenv import load_dotenv
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.prompts import ChatPromptTemplate
+from langchain.schema.output_parser import StrOutputParser
 
 load_dotenv()
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+
+llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0.2)
+deployment_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a DevOps expert analyzing code changes for potential deployment issues."),
+    ("user", (
+        "Analyze these code changes and determine if they might cause deployment issues:\n\n"
+        "Commit SHA: {commit_sha}\n"
+        "Commit Message: {commit_message}\n"
+        "Files Changed:\n{files_changed}\n\n"
+        "Based on the changes above, are there any potential deployment issues? "
+        "Respond with only 'Yes' or 'No'."
+    )),
+])
+deployment_chain = deployment_prompt | llm | StrOutputParser()
+
+def analyze_deployment_with_gemini(commit_sha: str, commit_message: str, commit_details: dict) -> str:
+    """
+    Analyze code changes using Gemini to identify potential deployment issues.
+    Returns 'Yes' or 'No' indicating if there are potential issues.
+    """
+    try:
+        # Format the files changed for the prompt
+        files_changed = []
+        for file in commit_details["files"]:
+            file_info = f"- {file['filename']} ({file['status']})"
+            if file['patch']:
+                file_info += f"\n  Changes: {file['patch'][:200]}..."  # Truncate long patches
+            files_changed.append(file_info)
+        
+        files_changed_str = "\n".join(files_changed)
+        
+        # Get analysis from Gemini
+        print("About to call Gemini...")
+        result = deployment_chain.invoke({
+            "commit_sha": commit_sha,
+            "commit_message": commit_message,
+            "files_changed": files_changed_str
+        })
+        print("Gemini call complete.")
+        
+        # Print the raw output from Gemini
+        print("\n[INFO] Raw Gemini Analysis:")
+        print("Input to Gemini:")
+        print(f"Commit SHA: {commit_sha}")
+        print(f"Commit Message: {commit_message}")
+        print("Files Changed:")
+        print(files_changed_str)
+        print("\nGemini's Response:")
+        print(result)
+        print("-" * 50)
+        
+        return result.strip()
+    except Exception as e:
+        print(f"[ERROR] Exception during Gemini analysis: {e}")
+        return "Error"
 
 def get_github_commit_info(repo_name: str, branch: str = "main") -> tuple[str | None, str | None, dict | None]:
     """
@@ -75,5 +134,11 @@ def fix_last_commit(app):
     
     if commit_sha and commit_details:
         print_commit_details(commit_sha, commit_message, commit_details)
+        
+        # Analyze deployment with Gemini
+        print("\n[INFO] Analyzing deployment with Gemini...")
+        deployment_analysis = analyze_deployment_with_gemini(commit_sha, commit_message, commit_details)
+        print(f"[INFO] Deployment Analysis: {deployment_analysis}")
+        
         return commit_sha
     return None 

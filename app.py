@@ -11,6 +11,7 @@ from pathlib import Path
 from zipfile import ZipFile
 from io import BytesIO
 from langchain_community.document_loaders import TextLoader
+from agents import LogAnalyzer
 
 load_dotenv()
 
@@ -185,6 +186,24 @@ async def github_webhook(
         if status == "completed" and conclusion in negative_conclusions:
             print(f"Workflow run ended with negative status '{conclusion}': {run_id} in {owner}/{repo_name}")
             await fetch_and_store_workflow_logs(owner, repo_name, run_id, installation_id)
+
+            # --- Integrate LogAnalyzer ---
+            log_directory_for_analysis = Path("logs") / f"{owner}_{repo_name}" / str(run_id)
+            
+            if os.getenv("GOOGLE_API_KEY"):
+                try:
+                    analyzer = LogAnalyzer()
+                    analysis_result = await analyzer.async_analyze_log_directory(str(log_directory_for_analysis))
+                    
+                    print("\n========== Log Analysis Result (from app.py) ==========")
+                    print(analysis_result)
+                    print("========== End of Analysis (from app.py) ==========")
+                    # Here you would propagate analysis_result to the next agent/step
+                except Exception as e:
+                    print(f"Error during LogAnalyzer execution from app.py: {e}")
+            else:
+                print("GOOGLE_API_KEY not set. Skipping LogAnalyzer.")
+            # --- End LogAnalyzer Integration ---
 
     # Handle pull_request.opened
     if x_github_event == "pull_request" and payload.get("action") == "opened":

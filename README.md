@@ -22,11 +22,12 @@ GitOps AI assistant acting as CtrlZ for production.
 ## Set environment variables
 
 1. Create a `.env` file in the project root.
-2. Add your GitHub App's private key, app ID, and webhook secret to the `.env` file:
+2. Add your GitHub App's private key, app ID, LLM APIO key, and webhook secret to the `.env` file:
    ```env
    APP_ID=your_github_app_id
    WEBHOOK_SECRET=your_webhook_secret
    PRIVATE_KEY=-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----
+   GOOGLE_API_KEY=your_api_key
    ```
    (Paste your private key as a single line, replacing newlines with `\n`.)
 

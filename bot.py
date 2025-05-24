@@ -32,8 +32,8 @@ prompt_template = ChatPromptTemplate.from_messages([
 chain = prompt_template | llm | StrOutputParser()
 
 async def poll_loop():
-    print("hello")
     fix_last_commit(APPS_TO_MONITOR[0])
+    # TODO: uncomment
     '''
     while True:
         for app in APPS_TO_MONITOR:

@@ -1,5 +1,6 @@
 import httpx
 import os
+import requests
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.prompts import ChatPromptTemplate
@@ -51,6 +52,20 @@ fix_commit_prompt = ChatPromptTemplate.from_messages([
 ])
 fix_commit_chain = fix_commit_prompt | llm | StrOutputParser()
 
+def print_gemini_analysis_output(commit_sha: str, commit_message: str, files_changed_str: str, logs: str, result: str) -> None:
+    print("\n[INFO] Raw Gemini Analysis:")
+    print("Input to Gemini:")
+    print(f"Commit SHA: {commit_sha}")
+    print(f"Commit Message: {commit_message}")
+    print("Files Changed:")
+    print(files_changed_str)
+    # Print Deployment Logs
+    # print("Logs:")
+    # print(logs)
+    print("\nGemini's Response:")
+    print(result)
+    print("-" * 50)
+
 def analyze_deployment_with_gemini(commit_sha: str, commit_message: str, commit_details: dict) -> str:
     logs = fetch_deployment_logs()
     try:
@@ -73,22 +88,9 @@ def analyze_deployment_with_gemini(commit_sha: str, commit_message: str, commit_
             "logs": logs
         })
         print("Gemini call complete.")
-        
-        # Print the raw output from Gemini
-        print("\n[INFO] Raw Gemini Analysis:")
-        print("Input to Gemini:")
-        print(f"Commit SHA: {commit_sha}")
-        print(f"Commit Message: {commit_message}")
-        print("Files Changed:")
-        print(files_changed_str)
-        
-        # Print Deployment Logs
-        # print("Logs:")
-        # print(logs)
-        print("\nGemini's Response:")
-        print(result)
-        print("-" * 50)
-        
+
+        # TODO: uncomment to debug
+        #print_gemini_analysis_output(commit_sha, commit_message, files_changed_str, logs, result)
         return result.strip()
     except Exception as e:
         print(f"[ERROR] Exception during Gemini analysis: {e}")
@@ -113,12 +115,47 @@ def generate_fixed_commit_with_gemini(commit_sha: str, commit_message: str, comm
             "logs": logs
         })
         print("Gemini call complete.")
-        print("\n[INFO] Gemini's Fix Suggestion:\n", result)
+        # TODO: uncomment to debug
+        # print("\n[INFO] Gemini's Fix Suggestion:\n", result)
         print("-" * 50)
         return result.strip()
     except Exception as e:
         print(f"[ERROR] Exception during Gemini commit fix: {e}")
         return "Error"
+
+def create_pr_with_gemini_fix(repo_name, base_branch, pr_branch, diff, pr_title, pr_body, github_token):
+    """
+    Creates a PR on GitHub with the given diff and description.
+    For now, this will only create a branch and PR with the diff and description in the PR body.
+    """
+    headers = {
+        "Authorization": f"Bearer {github_token}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    repo_api = f"https://api.github.com/repos/{repo_name}"
+    # 1. Get the latest commit SHA of the base branch
+    branch_resp = requests.get(f"{repo_api}/git/ref/heads/{base_branch}", headers=headers)
+    branch_resp.raise_for_status()
+    base_sha = branch_resp.json()["object"]["sha"]
+    # 2. Create a new branch
+    data = {
+        "ref": f"refs/heads/{pr_branch}",
+        "sha": base_sha
+    }
+    create_branch_resp = requests.post(f"{repo_api}/git/refs", headers=headers, json=data)
+    if create_branch_resp.status_code not in (201, 422):  # 422 if branch already exists
+        raise Exception(f"Failed to create branch: {create_branch_resp.text}")
+    # 3. Create a PR (with the diff and description in the body)
+    pr_data = {
+        "title": pr_title,
+        "head": pr_branch,
+        "base": base_branch,
+        "body": f"{pr_body}\n\n---\n\nProposed diff:\n\n```diff\n{diff}\n```"
+    }
+    pr_resp = requests.post(f"{repo_api}/pulls", headers=headers, json=pr_data)
+    pr_resp.raise_for_status()
+    print(f"PR created: {pr_resp.json()['html_url']}")
+    return pr_resp.json()["html_url"]
 
 def get_github_commit_info(repo_name: str, branch: str = "main") -> tuple[str | None, str | None, dict | None]:
     """
@@ -188,12 +225,11 @@ def fix_last_commit(app):
     commit_sha, commit_message, commit_details = get_commit_diff(repo_name)
     
     if commit_sha and commit_details:
-        print_commit_details(commit_sha, commit_message, commit_details)
-        
-        # Generate fixed commit with Gemini
+        # TODO: uncomment to debug
+        #print_commit_details(commit_sha, commit_message, commit_details)
         print("\n[INFO] Generating fixed commit with Gemini...")
         fixed_diff = generate_fixed_commit_with_gemini(commit_sha, commit_message, commit_details)
-        print(f"[INFO] Gemini's Fixed Commit Suggestion:\n{fixed_diff}")
-        
-        return commit_sha
-    return None 
+        print(f"[INFO] STATUS: fixed_diff")
+        # TODO: uncomment to debug
+        #print(f"[INFO] Gemini's Fixed Commit Suggestion:\n{fixed_diff}")
+        return commit_sha 

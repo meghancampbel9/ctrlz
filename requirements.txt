@@ -7,3 +7,5 @@ paramiko
 openai
 dotenv
 google
+langchain
+langchain_google_genai

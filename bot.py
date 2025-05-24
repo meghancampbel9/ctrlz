@@ -100,6 +100,30 @@ def analyze_logs_with_gemini(logs: str) -> str:
     result = chain.invoke({"log_content": logs})
     return result.strip()
 
+def get_commit_diff(repo_name: str, commit_sha: str) -> None:
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "Python/httpx",
+        "Authorization": f"Bearer {GITHUB_TOKEN}"
+    }
+    
+    commit_url = f"https://api.github.com/repos/{repo_name}/commits/{commit_sha}"
+    commit_response = httpx.get(commit_url, headers=headers)
+    
+    if commit_response.status_code == 200:
+        commit_details = commit_response.json()
+        print("\n[INFO] Code changes in this commit:")
+        for file in commit_details["files"]:
+            print(f"\nFile: {file['filename']}")
+            print(f"Status: {file['status']}")
+            if file['patch']:
+                print("Changes:")
+                print(file['patch'])
+            print("-" * 50)
+    else:
+        print(f"[ERROR] Failed to fetch commit diff: {commit_response.status_code}")
+        print(f"[ERROR] Response: {commit_response.text}")
+
 def fix_last_commit(app):
     repo_name = app["repo_name"]
     url = f"https://api.github.com/repos/{repo_name}/commits/main"
@@ -111,7 +135,6 @@ def fix_last_commit(app):
     }
     
     try:
-        # Get the latest commit
         response = httpx.get(url, headers=headers)
         if response.status_code == 200:
             commit_data = response.json()
@@ -120,20 +143,7 @@ def fix_last_commit(app):
             print(f"[INFO] Latest commit in main: {commit_sha}")
             print(f"[INFO] Commit message: {commit_message}")
             
-            # Get the commit details including diff
-            commit_url = f"https://api.github.com/repos/{repo_name}/commits/{commit_sha}"
-            commit_response = httpx.get(commit_url, headers=headers)
-            if commit_response.status_code == 200:
-                commit_details = commit_response.json()
-                print("\n[INFO] Code changes in this commit:")
-                for file in commit_details["files"]:
-                    print(f"\nFile: {file['filename']}")
-                    print(f"Status: {file['status']}")
-                    if file['patch']:
-                        print("Changes:")
-                        print(file['patch'])
-                    print("-" * 50)
-            
+            get_commit_diff(repo_name, commit_sha)
             return commit_sha
         else:
             print(f"[ERROR] Failed to fetch commit data: {response.status_code}")

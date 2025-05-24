@@ -66,8 +66,10 @@ def analyze_deployment_with_gemini(commit_sha: str, commit_message: str, commit_
         print(f"Commit Message: {commit_message}")
         print("Files Changed:")
         print(files_changed_str)
-        print("Logs:")
-        print(logs)
+        
+        # Print Deployment Logs
+        # print("Logs:")
+        # print(logs)
         print("\nGemini's Response:")
         print(result)
         print("-" * 50)

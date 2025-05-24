@@ -8,7 +8,9 @@ from fastapi import FastAPI, Request, Header, HTTPException
 from dotenv import load_dotenv
 from pathlib import Path
 from bot import poll_loop
+from fastapi.responses import JSONResponse
 import asyncio
+
 
 load_dotenv()
 
@@ -17,6 +19,7 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")
 
 app = FastAPI()
+
 
 def verify_signature(payload: bytes, signature: str):
     if not signature:
@@ -27,6 +30,7 @@ def verify_signature(payload: bytes, signature: str):
     mac = hmac.new(WEBHOOK_SECRET.encode(), msg=payload, digestmod=hashlib.sha256)
     return hmac.compare_digest(mac.hexdigest(), signature)
 
+
 def generate_jwt():
     now = int(time.time())
     payload = {
@@ -36,6 +40,7 @@ def generate_jwt():
     }
     encoded_jwt = jwt.encode(payload, PRIVATE_KEY, algorithm="RS256")
     return encoded_jwt
+
 
 @app.on_event("startup")
 async def start_polling():
@@ -54,6 +59,7 @@ async def get_installation_access_token(installation_id):
         resp.raise_for_status()
         return resp.json()["token"]
 
+
 async def post_pr_comment(owner, repo, issue_number, body, installation_id):
     token = await get_installation_access_token(installation_id)
     url = f"https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}/comments"
@@ -67,6 +73,7 @@ async def post_pr_comment(owner, repo, issue_number, body, installation_id):
         resp = await client.post(url, headers=headers, json=data)
         resp.raise_for_status()
         return resp.json()
+
 
 async def fetch_and_store_workflow_logs(owner, repo, run_id, installation_id):
     token = await get_installation_access_token(installation_id)
@@ -88,6 +95,7 @@ async def fetch_and_store_workflow_logs(owner, repo, run_id, installation_id):
         else:
             print(f"Failed to fetch logs: {resp.status_code} {resp.text}")
 
+
 async def read_file_from_repo(owner, repo, path, ref, installation_id):
     token = await get_installation_access_token(installation_id)
     url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={ref}"
@@ -106,6 +114,7 @@ async def read_file_from_repo(owner, repo, path, ref, installation_id):
         return content["content"]
 
 @app.post("/api/webhook")
+
 async def github_webhook(
     request: Request,
     x_github_event: str = Header(None),
@@ -163,4 +172,64 @@ async def github_webhook(
         except Exception as e:
             print(f"Failed to comment: {e}")
 
-    return {"ok": True}
+    return {"ok": True}The provided information shows a 500 error despite the JSON response indicating a "healthy" status. This is a mismatch and indicates a problem in the health check implementation itself, not necessarily a genuine failure of the application.  The `health()` function needs to be corrected to return the appropriate HTTP status code.
+
+Here's a revised `health()` function (assuming a Python Flask application, adjust as needed for your framework):
+
+
+```python
+from flask import Flask, jsonify
+
+app = Flask(__name__)
+
+# Simulate a health check that might fail (replace with your actual health check logic)
+def is_healthy():
+    # Replace this with your actual health checks.  Examples:
+    # - Check database connection
+    # - Check external service availability
+    # - Check file system access
+    # - Check memory usage
+    try:
+        # Example: Check if a critical file exists
+        with open("/tmp/healthcheck.txt", "r") as f:
+            f.read()
+        return True
+    except FileNotFoundError:
+        return False
+    except Exception as e:  # Catch other potential errors
+        print(f"Error during health check: {e}")
+        return False
+
+
+@app.route("/health")
+def health():
+    if is_healthy():
+        return jsonify({"status": "healthy"}), 200
+    else:
+        return jsonify({"status": "unhealthy", "error": "Health check failed"}), 500
+
+if __name__ == "__main__":
+    app.run(debug=True, host='0.0.0.0', port=5000) # Adjust port as needed
+
+```
+
+**Explanation of Changes:**
+
+1. **`is_healthy()` function:** This function encapsulates the actual health check logic.  It's crucial to replace the placeholder with your application's specific health checks.  The example shows a simple file existence check;  you'll need more robust checks based on your application's dependencies and critical components.  Error handling is included to prevent unexpected exceptions from crashing the health check.
+
+2. **HTTP Status Codes:** The `health()` function now explicitly returns the correct HTTP status code (200 for healthy, 500 for unhealthy) along with the JSON response.  This ensures that monitoring systems correctly interpret the health check result.
+
+3. **Error Message:**  A more informative error message is included in the 500 response to aid in debugging.  Consider logging the error details for better troubleshooting.
+
+4. **Error Handling:** The `try...except` block in `is_healthy()` handles potential errors during the health check, preventing the entire application from crashing.  It's important to log these errors for later analysis.
+
+
+**To use this:**
+
+1.  **Replace the placeholder health check** in `is_healthy()` with your application's actual health checks.
+2.  **Save the code** as a Python file (e.g., `health_check.py`).
+3.  **Run the application:** `python health_check.py`
+4.  **Test the health check endpoint:**  Access `/health` in your browser or using `curl`.
+
+
+Remember to adjust the code to match your specific application framework and health check requirements.  If you provide more details about your application's architecture and dependencies, I can give you more tailored advice.

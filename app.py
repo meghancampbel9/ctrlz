@@ -8,12 +8,18 @@ from fastapi import FastAPI, Request, Header, HTTPException
 from dotenv import load_dotenv
 import json
 from pathlib import Path
+from zipfile import ZipFile
+from io import BytesIO
+from langchain_community.document_loaders import TextLoader
 
 load_dotenv()
 
 APP_ID = os.getenv("APP_ID")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")
+if PRIVATE_KEY:
+    with open(PRIVATE_KEY, "r") as f:
+        PRIVATE_KEY = f.read()
 
 app = FastAPI()
 
@@ -70,15 +76,52 @@ async def fetch_and_store_workflow_logs(owner, repo, run_id, installation_id):
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28"
     }
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(follow_redirects=True) as client:
         resp = await client.get(logs_url, headers=headers)
         if resp.status_code == 200:
-            logs_dir = Path("logs")
-            logs_dir.mkdir(exist_ok=True)
-            log_path = logs_dir / f"{owner}_{repo}_run_{run_id}.zip"
-            with open(log_path, "wb") as f:
-                f.write(resp.content)
-            print(f"Saved logs to {log_path}")
+            # Create the structured directory path
+            # logs/owner_repo/run_id/
+            base_logs_dir = Path("logs")
+            repo_specific_dir = base_logs_dir / f"{owner}_{repo}"
+            run_specific_dir = repo_specific_dir / str(run_id)
+            run_specific_dir.mkdir(parents=True, exist_ok=True)
+
+            # Extract logs from zip in memory
+            with ZipFile(BytesIO(resp.content)) as zip_file:
+                for log_filename_in_zip in zip_file.namelist():
+                    # Sanitize the filename from the zip to be a valid path component
+                    # and ensure it's a .txt file
+                    if log_filename_in_zip.endswith(".txt"):
+                        # Use the original name from the zip, replacing / to avoid creating subdirs from it
+                        sanitized_log_filename = log_filename_in_zip.replace('/', '_')
+                        
+                        # Path where the individual processed log file will be stored
+                        output_log_path = run_specific_dir / sanitized_log_filename
+                        
+                        with zip_file.open(log_filename_in_zip) as log_file:
+                            log_content_bytes = log_file.read()
+                            try:
+                                log_content_str = log_content_bytes.decode('utf-8')
+                            except UnicodeDecodeError:
+                                log_content_str = log_content_bytes.decode('latin-1', errors='replace') # Fallback
+
+                            # Save the raw content to a temporary file for TextLoader
+                            # (TextLoader expects a file path)
+                            # We can use the final path directly if we write, then load, then overwrite.
+                            with open(output_log_path, "w", encoding="utf-8") as f:
+                                f.write(log_content_str)
+                            
+                            # Process with LangChain TextLoader
+                            loader = TextLoader(str(output_log_path), encoding="utf-8")
+                            docs = loader.load() # This might split the doc, which is fine.
+                            
+                            # Overwrite with preprocessed content (or content from TextLoader)
+                            # TextLoader usually provides one document per file, but it could be chunked.
+                            # For simplicity, we'll join them back if chunked, or just write the content.
+                            with open(output_log_path, "w", encoding="utf-8") as f:
+                                for doc in docs:
+                                    f.write(doc.page_content + "\n") # Add newline between docs if chunked
+            print(f"Processed and stored logs for failed run {run_id} in {run_specific_dir}")
         else:
             print(f"Failed to fetch logs: {resp.status_code} {resp.text}")
 
@@ -137,9 +180,10 @@ async def github_webhook(
         # Log when workflow is started
         if action == "requested":
             print(f"Workflow run started: {run_id} in {owner}/{repo_name}")
-        # Fetch and store logs if workflow failed
-        if status == "completed" and conclusion == "failure":
-            print(f"Workflow run failed: {run_id} in {owner}/{repo_name}")
+        # Fetch and store logs if workflow ended with a negative status
+        negative_conclusions = {"failure", "cancelled", "timed_out", "action_required", "stale"}
+        if status == "completed" and conclusion in negative_conclusions:
+            print(f"Workflow run ended with negative status '{conclusion}': {run_id} in {owner}/{repo_name}")
             await fetch_and_store_workflow_logs(owner, repo_name, run_id, installation_id)
 
     # Handle pull_request.opened

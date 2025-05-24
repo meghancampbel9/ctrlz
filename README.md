@@ -1,5 +1,10 @@
-# ctrlz
-GitOps AI assistant acting as a Ctrl + z for production.
+# CtrlZ
+GitOps AI assistant acting as CtrlZ for production.
+
+## Features
+- Responds to GitHub webhook events (e.g., workflow runs, pull requests)
+- Fetches and stores logs from failed workflow runs in the `/logs` directory
+- Utility to read files from the repository (for future use)
 
 ## Install (Python/FastAPI)
 
@@ -45,8 +50,3 @@ You can use [smee.io](https://smee.io/) to receive webhooks locally.
 - Now, webhooks will be forwarded from smee.io to your local FastAPI server.
 
 Learn more: [smee.io](https://smee.io/)
-
-## Features
-- Responds to GitHub webhook events (e.g., workflow runs, pull requests)
-- Fetches and stores logs from failed workflow runs in the `/logs` directory
-- Utility to read files from the repository (for future use)

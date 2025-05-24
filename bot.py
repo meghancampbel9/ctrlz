@@ -88,7 +88,7 @@ async def fetch_docker_logs_and_status(app):
     return status, exit_code, logs
 
 async def restart_latest(app):
-    print(f"[ACTION] Restarting latest image for {app['name']}...")
+    print(f"[ACTION] Restarting latest image for {app['name']} (attempting to fix health check failure)...")
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     ssh.connect(hostname=EC2_HOST, username=EC2_USERNAME, key_filename=EC2_KEY_PATH)
@@ -97,7 +97,7 @@ async def restart_latest(app):
       docker stop {app['name']} || true
       docker rm {app['name']} || true
       docker pull {LATEST_IMAGE} || true
-      docker run -d --name {app['name']} -p 80:80 {LATEST_IMAGE} || true
+      docker run -d --name {app['name']} -p 80:80 --restart=always {LATEST_IMAGE} || true
     """    
     ssh.exec_command(restart_cmd)
     print(f"[INFO] Restart command executed for {app['name']}.")
@@ -138,10 +138,12 @@ async def poll_loop():
                         status, exit_code, logs = await fetch_docker_logs_and_status(app) 
                         
                         if exit_code in (0, 1):
-                            #await restart_stable(app)
+                            
                             health_response = await get_health_response(app)
                             code_text = read_file_contents("bot.py")  # adjust path if needed
                             diagnosis = await analyze_failure(health_response, logs, code_text)
+
+                            patch = clean_patch(diagnosis)
                             with open("suggested_fix.patch", "w") as f:
                                 f.write(diagnosis)
 
@@ -165,7 +167,7 @@ async def poll_loop():
                 print(f"[ERROR] Exception occurred during health check: {e}. Checking container state...")
                 status, exit_code, logs = await fetch_docker_logs_and_status(app)
                 if exit_code in (0,1):
-                    
+
                     health_response = await get_health_response(app)
                     code_text = read_file_contents("bot.py")
                     diagnosis = await analyze_failure(health_response, logs, code_text)
@@ -191,6 +193,7 @@ def apply_patch_and_push_branch(patch_path="suggested_fix.patch", repo_path=".")
         subprocess.run(["git", "apply", patch_path], check=True, cwd=repo_path)
         print("[INFO] Patch applied successfully.")
 
+        subprocess.run(["git", "add", "."], check=True, cwd=repo_path)
         subprocess.run(["git", "checkout", "-b", branch_name], check=True, cwd=repo_path)
 
         subprocess.run(["git", "add", "."], check=True, cwd=repo_path)
@@ -202,6 +205,15 @@ def apply_patch_and_push_branch(patch_path="suggested_fix.patch", repo_path=".")
     except subprocess.CalledProcessError as e:
         print(f"[ERROR] Git operation failed: {e}")
         return None
+
+def clean_patch(patch_text: str) -> str:
+    lines = patch_text.splitlines()
+    clean_lines = []
+    for line in lines:
+        if line.startswith("```"):
+            continue
+        clean_lines.append(line)
+    return "\n".join(clean_lines)
 
 def create_pull_request(branch_name: str, patch_summary: str = "Auto-fix: health check improvement"):
     import time #This import is already present in the file

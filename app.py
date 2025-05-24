@@ -6,8 +6,9 @@ import httpx
 import jwt
 from fastapi import FastAPI, Request, Header, HTTPException
 from dotenv import load_dotenv
-import json
 from pathlib import Path
+from bot import poll_loop
+import asyncio
 
 load_dotenv()
 
@@ -35,6 +36,11 @@ def generate_jwt():
     }
     encoded_jwt = jwt.encode(payload, PRIVATE_KEY, algorithm="RS256")
     return encoded_jwt
+
+@app.on_event("startup")
+async def start_polling():
+    print("start polling")
+    asyncio.create_task(poll_loop())
 
 async def get_installation_access_token(installation_id):
     jwt_token = generate_jwt()

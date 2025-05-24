@@ -3,3 +3,6 @@ httpx
 pyjwt
 python-dotenv
 uvicorn
+paramiko
+openai
+dotenv

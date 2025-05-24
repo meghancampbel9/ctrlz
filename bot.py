@@ -87,7 +87,7 @@ async def fetch_docker_logs_and_status(app):
     return status, exit_code, logs
 
 async def restart_latest(app):
-    print(f"[ACTION] Restarting latest image for {app['name']}...")
+    print(f"[ACTION] Restarting latest image for {app['name']} with docker run command...")
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     ssh.connect(hostname=EC2_HOST, username=EC2_USERNAME, key_filename=EC2_KEY_PATH)
@@ -95,7 +95,7 @@ async def restart_latest(app):
     restart_cmd = f"""
       docker stop {app['name']} || true
       docker rm {app['name']} || true
-      docker pull {LATEST_IMAGE}
+      docker pull {LATEST_IMAGE} || true
       docker run -d --name {app['name']} -p 80:80 {LATEST_IMAGE}
     """
     ssh.exec_command(restart_cmd)
@@ -109,7 +109,7 @@ async def restart_stable(app):
     ssh.connect(hostname=EC2_HOST, username=EC2_USERNAME, key_filename=EC2_KEY_PATH)
 
     restart_cmd = (
-        f"docker stop {app['name']} || true && "
+        f"docker stop {app['name']} || true && " #Fixed typo here
         f"docker rm {app['name']} || true && "
         f"docker run -d --name {app['name']} -p 80:80 {STABLE_IMAGE}"
     )
@@ -124,7 +124,7 @@ async def get_health_response(app) -> str:
             r = await client.get(app["url"])
             return f"{r.status_code} {r.text}"
     except Exception as e:
-        return f"ERROR: {str(e)}"
+        return f"ERROR: {e}"
 
 async def poll_loop():
     while True:
@@ -133,7 +133,7 @@ async def poll_loop():
                 async with httpx.AsyncClient(timeout=5) as client:
                     r = await client.get(app["url"], timeout=5)
                     if r.status_code != 200:
-                        print(f"[!] Health check failed for {app['name']}, analyzing...")
+                        print(f"[!] Health check failed for {app['name']} (HTTP {r.status_code}), analyzing...")
                         status, exit_code, logs = await fetch_docker_logs_and_status(app)
 
                         if exit_code in (0, 1):
@@ -161,7 +161,7 @@ async def poll_loop():
                     else: 
                         print(f"[OK] {app['name']} is healthy")
             except Exception as e:
-                print(f"[ERROR] Exception occurred: {e}. Checking container state...")
+                print(f"[ERROR] Exception occurred during health check: {e}. Checking container state...")
                 status, exit_code, logs = await fetch_docker_logs_and_status(app)
                 if exit_code in (0, 1):
                     #await restart_stable(app)
@@ -184,6 +184,7 @@ async def poll_loop():
 
 def apply_patch_and_push_branch(patch_path="suggested_fix.patch", repo_path="."):
     branch_name = f"auto-fix-health-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
+    print(f"[INFO] Creating branch: {branch_name}")
 
     try:
         subprocess.run(["git", "apply", patch_path], check=True, cwd=repo_path)

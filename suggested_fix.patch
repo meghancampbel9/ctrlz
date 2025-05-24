@@ -5,55 +5,86 @@
      return status, exit_code, logs
  
  async def restart_latest(app):
--    print(f"[ACTION] Restarting latest image for {app['name']} with docker run command...")
-+    print(f"[ACTION] Restarting latest image for {app['name']}")
+-    print(f"[ACTION] Restarting latest image for {app['name']}")
++    print(f"[ACTION] Restarting latest image for {app['name']}...")
      ssh = paramiko.SSHClient()
      ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
      ssh.connect(hostname=EC2_HOST, username=EC2_USERNAME, key_filename=EC2_KEY_PATH)
-@@ -110,7 +110,7 @@
-       docker stop {app['name']} || true
+@@ -110,12 +110,12 @@
        docker rm {app['name']} || true
        docker pull {LATEST_IMAGE} || true
--      docker run -d --name {app['name']} -p 80:80 {LATEST_IMAGE}
-+      docker run -d --name {app['name']} -p 80:80 {LATEST_IMAGE} || true
-     """
+       docker run -d --name {app['name']} -p 80:80 {LATEST_IMAGE} || true
+-    """
++    """    
      ssh.exec_command(restart_cmd)
      print(f"[INFO] Restart command executed for {app['name']}.")
-@@ -125,7 +125,7 @@
+     ssh.close()
  
-     restart_cmd = (
-         f"docker stop {app['name']} || true && " #Fixed typo here
--        f"docker rm {app['name']} || true && "
-+        f"docker rm {app['name']} || true && " 
-         f"docker run -d --name {app['name']} -p 80:80 {STABLE_IMAGE}"
+-async def restart_stable(app):
++async def restart_stable(app): #This function is not used currently
+     print(f"[ACTION] Restarting stable image for {app['name']}")
+     ssh = paramiko.SSHClient()
+     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+@@ -127,7 +127,7 @@
      )
      ssh.exec_command(restart_cmd)
-@@ -140,7 +140,7 @@
-             r = await client.get(app["url"])
-             return f"{r.status_code} {r.text}"
-     except Exception as e:
--        return f"ERROR: {e}"
-+        return f"ERROR: {e} - Check if the application is running and listening on port 80"
+     ssh.close()
+-    print(f"[PAUSE] Waiting 30 seconds after stable restart for {app['name']}...")
++    print(f"[PAUSE] Waiting 30 seconds after stable restart for {app['name']}")
+     await asyncio.sleep(30)
  
- async def poll_loop():
-     while True:
-@@ -150,7 +150,7 @@
-                     r = await client.get(app["url"], timeout=5)
+ async def get_health_response(app) -> str:
+@@ -145,7 +145,7 @@
                      if r.status_code != 200:
                          print(f"[!] Health check failed for {app['name']} (HTTP {r.status_code}), analyzing...")
--                        status, exit_code, logs = await fetch_docker_logs_and_status(app)
-+                        status, exit_code, logs = await fetch_docker_logs_and_status(app) 
- 
+                         status, exit_code, logs = await fetch_docker_logs_and_status(app) 
+-
++                        
                          if exit_code in (0, 1):
                              #await restart_stable(app)
-@@ -176,7 +176,7 @@
-             except Exception as e:
+                             health_response = await get_health_response(app)
+@@ -158,7 +158,6 @@
+                             if branch:
+                                 print(f"[NEXT] Open a PR from `{branch}` to `main`")
+                                 create_pull_request(branch)
+-
+ 
+                             print("[INFO] Saved suggested fix to suggested_fix.patch")
+                             print(f"[Gemini Diagnosis]:\n{diagnosis}")
+@@ -176,7 +175,7 @@
                  print(f"[ERROR] Exception occurred during health check: {e}. Checking container state...")
                  status, exit_code, logs = await fetch_docker_logs_and_status(app)
--                if exit_code in (0, 1):
-+                if exit_code in (0,1):
-                     #await restart_stable(app)
+                 if exit_code in (0,1):
+-                    #await restart_stable(app)
++                    
                      health_response = await get_health_response(app)
                      code_text = read_file_contents("bot.py")
+                     diagnosis = await analyze_failure(health_response, logs, code_text)
+@@ -189,7 +188,6 @@
+                     if branch:
+                         print(f"[NEXT] Open a PR from `{branch}` to `main`")
+                         create_pull_request(branch)
+-
+                     print("[INFO] Saved suggested fix to suggested_fix.patch")
+                     print(f"[Gemini Diagnosis]:\n{diagnosis}")
+                 elif exit_code == 137:
+@@ -200,7 +198,7 @@
+         await asyncio.sleep(30) #Increased sleep time to allow for container restart and health check
+ 
+ def apply_patch_and_push_branch(patch_path="suggested_fix.patch", repo_path="."):
+-    branch_name = f"auto-fix-health-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
++    branch_name = f"auto-fix-health-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+     print(f"[INFO] Creating branch: {branch_name}")
+ 
+     try:
+@@ -222,7 +220,7 @@
+         return None
+ 
+ def create_pull_request(branch_name: str, patch_summary: str = "Auto-fix: health check improvement"):
+-    import time
++    import time #This import is already present in the file
+     import json
+ 
+     token = os.getenv("GITHUB_TOKEN")
 
 ```

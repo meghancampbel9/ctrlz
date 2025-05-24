@@ -9,3 +9,4 @@ langchain-text-splitters
 supabase
 GitPython
 tiktoken
+uvicorn

@@ -7,6 +7,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
 from langchain_core.documents import Document
 import hashlib
 import time
+import asyncio
 
 load_dotenv()
 
@@ -217,14 +218,14 @@ async def delete_all_chunks_for_repo(repo_id: str):
         print(f"Error deleting chunks for repo {repo_id}: {e}")
         return {"error": str(e)}
 
-# Example usage (for testing this module directly, not part of app.py)
+# Ensure this is the ONLY if __name__ == '__main__' block and it's at the end of the file.
 if __name__ == '__main__':
+    # This is the original main() from your earlier version of supabase_service.py
+    # It tests basic chunking, embedding, and storing for "owner/test_repo"
     async def main():
         if not supabase or not embeddings_model:
             print("Supabase or Embeddings model not initialized. Exiting test.")
             return
-
-        # Test data
         test_repo_id = "owner/test_repo"
         test_owner = "owner"
         test_repo_name = "test_repo"
@@ -233,77 +234,139 @@ if __name__ == '__main__':
         test_file_content = """
 def hello_world():
     print("Hello, world!")
-    # This is a simple function
-
 class MyClass:
     def __init__(self, name):
         self.name = name
-
     def greet(self):
         print(f"Hello, {self.name}!")
-
-# More code to make it longer
-# More code to make it longer
-# ... (repeat to ensure chunking)
-        """ * 10 # Make content long enough for multiple chunks
-
-        print(f"Testing with repo_id: {test_repo_id}")
-
-        # 1. Update status to 'indexing'
+""" * 10
+        print(f"Testing basic operations with repo_id: {test_repo_id}")
         await update_repository_indexing_status(test_repo_id, test_owner, test_repo_name, "indexing", test_commit_sha)
-        print(f"Repo status updated to indexing.")
-
-        # 2. Chunk content
         langchain_docs = chunk_file_content(test_file_content, test_file_path)
-        print(f"File content chunked into {len(langchain_docs)} Langchain documents.")
-        for i, doc in enumerate(langchain_docs):
-            print(f"  Chunk {i+1} ({len(doc.page_content)} chars): {doc.page_content[:80]}...")
-
-
-        # 3. Embed chunks
         if langchain_docs:
-            try:
-                chunk_embeddings = await embed_chunks(langchain_docs)
-                print(f"Generated {len(chunk_embeddings)} embeddings, each of dimension {len(chunk_embeddings[0]) if chunk_embeddings else 'N/A'}.")
-
-                # 4. Store chunks
-                chunks_to_store = [
-                    {"chunk_content": doc.page_content, "embedding": emb}
-                    for doc, emb in zip(langchain_docs, chunk_embeddings)
-                ]
-                await store_code_chunks_batch(test_repo_id, test_commit_sha, test_file_path, chunks_to_store)
-                print(f"Stored chunks for {test_file_path}")
-            except Exception as e:
-                print(f"Error during embedding or storing: {e}")
-        else:
-            print("No chunks generated, skipping embedding and storing.")
-
-
-        # 5. Calculate file hash
+            chunk_embeddings = await embed_chunks(langchain_docs)
+            chunks_to_store = [
+                {"chunk_content": doc.page_content, "embedding": emb}
+                for doc, emb in zip(langchain_docs, chunk_embeddings)
+            ]
+            await store_code_chunks_batch(test_repo_id, test_commit_sha, test_file_path, chunks_to_store)
         current_file_hash = calculate_file_hash(test_file_content)
-        print(f"Calculated hash for {test_file_path}: {current_file_hash}")
         file_hashes_map = {test_file_path: current_file_hash}
-
-        # 6. Update status to 'completed'
         await update_repository_indexing_status(test_repo_id, test_owner, test_repo_name, "completed", test_commit_sha, file_hashes_map)
-        print(f"Repo status updated to completed.")
+        print(f"Finished basic operations test for {test_repo_id}.")
 
-        # 7. Check repo status
-        status_check = await check_if_repo_indexed(test_repo_id)
-        print(f"Checked repo status: {status_check}")
-
-        # 8. Retrieve file hashes
-        retrieved_hashes = await get_indexed_file_hashes(test_repo_id)
-        print(f"Retrieved file hashes: {retrieved_hashes}")
+    async def test_search():
+        print("\n--- Testing RAG Search ---")
+        # test_search_repo_id = "owner/test_repo" # For data created by main() above
+        # test_query = "how to greet someone in python class"
         
-        # 9. Test deletion (optional cleanup)
-        # print(f"Attempting to delete chunks for file: {test_file_path}")
-        # await delete_chunks_for_file(test_repo_id, test_file_path)
-        # print(f"Attempting to delete all chunks for repo: {test_repo_id}")
-        # await delete_all_chunks_for_repo(test_repo_id)
-        # print(f"Attempting to delete repository record")
-        # await supabase.table("indexed_repositories").delete().eq("repo_id", test_repo_id).execute()
+        # For testing against data indexed by repository_indexer.py (e.g., your actual app data)
+        test_search_repo_id = "a-juchacz/kombo-hackathon-demo-app" # Ensure this is a repo you've indexed
+        test_query = "pipeline fail due to exit 1" # A query relevant to your indexed data
 
+        supa_client = get_supabase_client()
+        if not supa_client:
+            print("Supabase client not initialized for search test. Skipping.")
+            return
 
-    import asyncio
-    asyncio.run(main()) 
+        repo_status = await check_if_repo_indexed(test_search_repo_id)
+        if not repo_status or repo_status.get("status") != "completed":
+             print(f"Repository {test_search_repo_id} not found or not marked as 'completed'. Ensure it was indexed (e.g., by app.py or repository_indexer.py).")
+             return
+
+        print(f"Test searching in repo: {test_search_repo_id} with query: '{test_query}'")
+        results = await search_relevant_code_chunks(test_search_repo_id, test_query, top_k=3, similarity_threshold=0.2)
+
+        if results:
+            print("Search Results:")
+            for i, r in enumerate(results):
+                print(f"  Result {i+1}: File: {r.get('file_path')}, Similarity: {r.get('similarity'):.4f}")
+                print(f"    Content Snippet: {r.get('chunk_content', '')[:200]}...")
+        else:
+            print("No search results found or an error occurred during search test.")
+
+    async def combined_main_for_direct_script_run():
+        # When running supabase_service.py directly, first ensure dummy data exists
+        print("Running main() to ensure 'owner/test_repo' data exists or is updated...")
+        await main() 
+        print("main() finished.")
+        
+        # Then test search
+        await test_search()
+
+    # This asyncio.run call is correctly inside the if __name__ == '__main__' block
+    asyncio.run(combined_main_for_direct_script_run())
+
+# IMPORTANT: Ensure no other asyncio.run() calls exist anywhere else in this file at the global scope.
+
+# --- RAG Search Functionality ---
+
+async def search_relevant_code_chunks(repo_id: str, query_text: str, top_k: int = 5, similarity_threshold: float = 0.5) -> List[Dict[str, Any]]:
+    """
+    Searches for relevant code chunks in Supabase for a given repository and query.
+
+    Args:
+        repo_id (str): The repository ID (e.g., owner/repo_name) to search within.
+        query_text (str): The text to search for (e.g., from LogAnalyzer).
+        top_k (int): The maximum number of relevant chunks to return.
+        similarity_threshold (float): Minimum similarity score for a chunk to be considered relevant.
+
+    Returns:
+        List[Dict[str, Any]]: A list of matching code chunks, including their content, path, and similarity score.
+                               Returns an empty list if an error occurs or no chunks are found.
+    """
+    supabase_client = get_supabase_client()
+    embeddings = get_embeddings_model()
+
+    if not supabase_client or not embeddings:
+        print("Error: Supabase client or embeddings model not initialized for search.")
+        return []
+
+    if not query_text:
+        print("Error: Query text cannot be empty for search.")
+        return []
+    if not repo_id:
+        print("Error: Repo ID cannot be empty for search.")
+        return []
+
+    try:
+        # 1. Generate embedding for the query text
+        print(f"Generating embedding for query: '{query_text[:100]}...'")
+        query_embedding = await embeddings.aembed_query(query_text)
+        print(f"Query embedding generated (dimension: {len(query_embedding) if query_embedding else 'N/A'}).")
+
+        if not query_embedding:
+            print("Error: Failed to generate query embedding.")
+            return []
+
+        # 2. Call the Supabase database function `match_code_chunks`
+        print(f"Searching in repo '{repo_id}' for top {top_k} chunks with threshold {similarity_threshold}...")
+        rpc_params = {
+            "query_embedding": query_embedding,
+            "match_repo_id": repo_id,
+            "match_threshold": similarity_threshold,
+            "match_count": top_k
+        }
+        
+        # Correct way to use asyncio.to_thread with a method call that needs arguments and then .execute()
+        def db_call():
+            return supabase_client.rpc("match_code_chunks", rpc_params).execute()
+        
+        response = await asyncio.to_thread(db_call)
+
+        if response.data:
+            print(f"Found {len(response.data)} relevant chunks.")
+            # Ensure the structure matches what `match_code_chunks` returns, including 'similarity'
+            return response.data 
+        elif response.error:
+            print(f"Error during Supabase RPC call for search: {response.error}")
+            return []
+        else:
+            print("No relevant chunks found or unexpected response from Supabase.")
+            return []
+
+    except Exception as e:
+        print(f"An unexpected error occurred during code chunk search: {e}")
+        import traceback
+        traceback.print_exc()
+        return [] 

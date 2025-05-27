@@ -213,7 +213,7 @@ async def delete_github_branch(owner: str, repo: str, branch_name: str, installa
             else:
                 print(
                     f"[GitHub API Error] Failed to delete branch {branch_name}. Status: {e.response.status_code}, Response: {e.response.text}")
-                # Decide if we want to raise here or let creation fail. 
+                # Decide if we want to raise here or let creation fail.
                 # For now, let's log and let creation attempt proceed, which might then fail more clearly.
         except Exception as e:
             print(f"[GitHub API Error] An unexpected error occurred while deleting branch {branch_name}: {e}")
@@ -237,7 +237,7 @@ async def commit_file_to_github(owner: str, repo: str, branch_name: str, file_pa
         "sha": original_file_sha
     }
     # Check if file exists to get its SHA (for updating)
-    # For simplicity, this example always creates/overwrites. 
+    # For simplicity, this example always creates/overwrites.
     # A more robust version would get SHA if file exists for the "sha" field in data.
     async with httpx.AsyncClient() as client:
         resp = await client.put(url, headers=headers, json=data)

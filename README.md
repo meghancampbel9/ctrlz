@@ -39,7 +39,15 @@ CtrlZ monitors your GitHub repositories and takes action when workflow runs fail
 
 This automated pipeline aims to quickly address issues, provide developers with a head start on debugging, and reduce the mean time to recovery (MTTR) for production incidents reflected in workflow failures.
 
-## Install (Python/FastAPI)
+## Future Work
+
+Here are some areas for future development of CtrlZ:
+
+*   **Cloud Provider Integration (Contextual Infrastructure Awareness):** Enable the agent to fetch relevant failure logs from various cloud providers (e.g., AWS, GCP, Azure). This would allow for more context-aware fixes related to deployment issues. This is currently being developed in the branch "bot".
+*   **Automated Test Agent:** Implement an agent that can automatically run tests (unit, integration, etc.) on the proposed code fix in a sandboxed environment before a Pull Request is created. This would significantly increase confidence in the automated fixes.
+*   **Granular Configuration & Control:** Provide users with more options to configure which repositories, branches, cloud providers, or types of workflow failures CtrlZ should act upon.
+
+## Local Install (Python/FastAPI)
 
 1. **Clone the repository and enter the directory.**
 2. **Create and activate a virtual environment:**
@@ -84,3 +92,4 @@ You can use [smee.io](https://smee.io/) to receive webhooks locally.
 - Now, webhooks will be forwarded from smee.io to your local FastAPI server.
 
 Learn more: [smee.io](https://smee.io/)
+

@@ -259,9 +259,7 @@ async def get_full_file_content_from_chunks(repo_id: str, file_path: str, commit
             print(f"No chunks found for {file_path} (commit {commit_sha}) in repo {repo_id}.")
             return None
     except Exception as e:
-        print(f"Unexpected error retrieving/reconstructing file {file_path} (commit {commit_sha}): {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"Error reconstructing file {file_path} from chunks for repo {repo_id}, commit {commit_sha}: {e}")
         return None
 
 # Ensure this is the ONLY if __name__ == '__main__' block and it's at the end of the file.
@@ -417,4 +415,54 @@ async def search_relevant_code_chunks(repo_id: str, query_text: str, top_k: int 
         print(f"An unexpected error occurred during code chunk search: {e}")
         import traceback
         traceback.print_exc()
+        return [] 
+
+async def store_workflow_log(run_id: int, repository_full_name: str, workflow_name: str | None, job_name: str | None, log_filename: str, log_content: str) -> Dict:
+    """Stores a single workflow log entry into the 'workflow_logs' table."""
+    client = get_supabase_client()
+    if not client:
+        return {"error": "Supabase client not available"}
+
+    record_to_insert = {
+        "run_id": run_id,
+        "repository_full_name": repository_full_name,
+        "workflow_name": workflow_name,
+        "job_name": job_name,
+        "log_filename": log_filename,
+        "log_content": log_content,
+    }
+
+    try:
+        data, count = client.table("workflow_logs").insert(record_to_insert).execute()
+        if data and len(data) > 1 and len(data[1]) > 0:
+             print(f"Successfully inserted log for run {run_id}, file: {log_filename}")
+        else:
+             print(f"Log for run {run_id}, file: {log_filename} processed for insertion.")
+        return {"data": data, "count": count}
+    except Exception as e:
+        print(f"Error inserting workflow log for run {run_id}, file {log_filename}: {e}")
+        return {"error": str(e)}
+
+async def get_workflow_logs_for_run(run_id: int, repository_full_name: str) -> List[Dict[str, Any]]:
+    """Retrieves all workflow log entries for a given run_id and repository."""
+    client = get_supabase_client()
+    if not client:
+        print(f"Supabase client not available. Cannot fetch logs for run {run_id}")
+        return []
+
+    try:
+        response = client.table("workflow_logs") \
+            .select("log_filename, log_content, job_name, workflow_name") \
+            .eq("run_id", run_id) \
+            .eq("repository_full_name", repository_full_name) \
+            .order("id", desc=False) \
+            .execute()
+
+        if response.data:
+            return response.data
+        else:
+            print(f"No logs found in Supabase for run_id: {run_id} and repo: {repository_full_name}")
+            return []
+    except Exception as e:
+        print(f"Error fetching workflow logs for run {run_id} from Supabase: {e}")
         return [] 

@@ -15,7 +15,15 @@ from zipfile import ZipFile
 from io import BytesIO
 # from langchain_community.document_loaders import TextLoader
 from agents import LogAnalyzer, CodeFixer
-from supabase_service import check_if_repo_indexed, search_relevant_code_chunks, get_full_file_content_from_chunks, get_supabase_client, get_embeddings_model # Added imports
+from supabase_service import (
+    check_if_repo_indexed,
+    search_relevant_code_chunks,
+    get_full_file_content_from_chunks,
+    get_supabase_client,
+    get_embeddings_model,
+    store_workflow_log,
+    get_workflow_logs_for_run
+)
 from repository_indexer import process_repository
 
 load_dotenv()
@@ -118,12 +126,12 @@ async def post_pr_comment(owner, repo, issue_number, body, installation_id):
         print(f"[GitHub API Error] Failed to post PR comment to {owner}/{repo} #{issue_number}: {e}")
         return None
 
-async def fetch_and_store_workflow_logs(owner, repo, run_id, installation_id):
+async def fetch_and_store_workflow_logs(owner, repo, run_id, installation_id, workflow_name_from_payload: str | None):
     try:
         token = await get_installation_access_token(installation_id)
     except Exception as e_token:
         print(f"Failed to get installation token for log fetching: {e_token}")
-        return # Cannot proceed without token
+        return False # Cannot proceed without token
 
     logs_url = f"https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/logs"
     headers = {
@@ -131,21 +139,31 @@ async def fetch_and_store_workflow_logs(owner, repo, run_id, installation_id):
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28"
     }
+    repo_full_name = f"{owner}/{repo}"
+    logs_stored_successfully = True
+
     async with httpx.AsyncClient(follow_redirects=True) as client:
         try:
             resp = await client.get(logs_url, headers=headers)
             resp.raise_for_status() # Check for HTTP errors first
 
-            base_logs_dir = Path("logs")
-            repo_specific_dir = base_logs_dir / f"{owner}_{repo}"
-            run_specific_dir = repo_specific_dir / str(run_id)
-            run_specific_dir.mkdir(parents=True, exist_ok=True)
-
             with ZipFile(BytesIO(resp.content)) as zip_file:
                 for log_filename_in_zip in zip_file.namelist():
-                    if log_filename_in_zip.endswith(".txt"): # Process only .txt files
+                    if log_filename_in_zip.endswith(".txt") and not log_filename_in_zip.startswith("__MACOSX"): # Process only .txt files
+                        # Attempt to extract job_name and workflow_name (if not passed)
+                        parts = Path(log_filename_in_zip).parts
+                        job_name_from_log = None
+                        
+                        # Example log_filename_in_zip: "build_and_test/1_build.txt" or "deploy.txt"
+                        if len(parts) > 1 and parts[-2] != '.': # Check if there's a directory part (job name)
+                            job_name_from_log = parts[-2]
+                        elif not workflow_name_from_payload: # If no job name dir, and no workflow name from payload, log name might be job
+                             job_name_from_log = Path(log_filename_in_zip).stem.split('_')[0] # e.g. "build_linux_job_1_Build" -> "build"
+
+                        # Use workflow_name from payload if available, else try to infer or leave None
+                        current_workflow_name = workflow_name_from_payload
+                        
                         sanitized_log_filename = log_filename_in_zip.replace('/', '_')
-                        output_log_path = run_specific_dir / sanitized_log_filename
                         
                         with zip_file.open(log_filename_in_zip) as log_file:
                             log_content_bytes = log_file.read()
@@ -154,14 +172,31 @@ async def fetch_and_store_workflow_logs(owner, repo, run_id, installation_id):
                             except UnicodeDecodeError:
                                 log_content_str = log_content_bytes.decode('latin-1', errors='replace') # Fallback
                             
-                            with open(output_log_path, "w", encoding="utf-8") as f:
-                                f.write(log_content_str) # Store raw log content directly
-            print(f"Processed and stored raw logs for failed run {run_id} in {run_specific_dir}")
+                            # Store in Supabase
+                            result = await store_workflow_log(
+                                run_id=run_id,
+                                repository_full_name=repo_full_name,
+                                workflow_name=current_workflow_name, # Use workflow name from payload
+                                job_name=job_name_from_log, # Extracted from log file path
+                                log_filename=sanitized_log_filename,
+                                log_content=log_content_str
+                            )
+                            if result.get("error"):
+                                print(f"Error storing log {sanitized_log_filename} to Supabase: {result.get('error')}")
+                                logs_stored_successfully = False
+            
+            if logs_stored_successfully:
+                print(f"Processed and initiated storage of logs for failed run {run_id} for repo {repo_full_name} in Supabase.")
+            else:
+                print(f"Some errors occurred while storing logs for run {run_id} for repo {repo_full_name} in Supabase.")
+            return logs_stored_successfully
 
         except httpx.HTTPStatusError as e_http:
             print(f"Failed to fetch logs for run {run_id}: {e_http.response.status_code} {e_http.response.text}")
+            return False
         except Exception as e_zip:
             print(f"Error processing zip file for logs of run {run_id}: {e_zip}")
+            return False
 
 
 async def get_github_file_details(owner: str, repo: str, path: str, ref: str, installation_id: str) -> dict | None:
@@ -481,12 +516,14 @@ async def github_webhook(
             target_branch_for_fix = "unknown"
             workflow_path = None
             current_head_sha = None # SHA of the commit that triggered the workflow run
+            workflow_name_from_payload = None
 
             try:
                 workflow_info = payload.get("workflow", {})
                 workflow_path = workflow_info.get("path")
                 current_head_sha = workflow_run_info.get("head_sha")
                 current_head_branch = workflow_run_info.get("head_branch")
+                workflow_name_from_payload = workflow_info.get("name")
 
                 if not current_head_sha:
                     print(f"[ERROR] Critical: `head_sha` missing from workflow_run payload for run {run_id}. Cannot proceed with fix.")
@@ -518,13 +555,17 @@ async def github_webhook(
                 print(f"[ERROR] Failed during attempt to fetch workflow YAML or identify target branch for run {run_id}: {e_wf_fetch}")
                 # Still proceed, CodeFixer might work with less context.
             
+            logs_successfully_fetched_and_stored = False
             try:
-                await fetch_and_store_workflow_logs(owner, repo_name, run_id, installation_id)
+                # Pass workflow_name_from_payload to fetch_and_store_workflow_logs
+                logs_successfully_fetched_and_stored = await fetch_and_store_workflow_logs(owner, repo_name, run_id, installation_id, workflow_name_from_payload)
             except Exception as e:
                 print(f"[ERROR] Failed to fetch/store workflow logs for run {run_id}: {e}")
-                return {"ok": False, "error": "Failed to fetch/store logs"} # Critical for LogAnalyzer
+                # Do not return yet, allow CodeFixer to potentially proceed if some logs were processed or if it can work without.
 
-            log_directory_for_analysis = Path("logs") / f"{owner}_{repo_name}" / str(run_id)
+            if not logs_successfully_fetched_and_stored:
+                 print(f"[WARN] Log fetching/storage for run {run_id} was not fully successful. LogAnalyzer might operate on partial or no logs from Supabase.")
+            # log_directory_for_analysis = Path("logs") / f"{owner}_{repo_name}" / str(run_id) # Removed
             
             # Ensure core services are up before proceeding with agent logic
             if not (os.getenv("GOOGLE_API_KEY") and embeddings_model and supabase):
@@ -533,7 +574,9 @@ async def github_webhook(
 
             try:
                 log_analyzer = LogAnalyzer()
-                codefixer_prompt_input = await log_analyzer.async_analyze_log_directory(str(log_directory_for_analysis))
+                # Call new method that fetches from Supabase
+                repository_full_name = f"{owner}/{repo_name}"
+                codefixer_prompt_input = await log_analyzer.async_analyze_logs_from_supabase(run_id, repository_full_name)
                 
                 print("\n========== Structured Prompt for CodeFixer (from LogAnalyzer) ==========")
                 print(codefixer_prompt_input[:1000] + ("..." if len(codefixer_prompt_input) > 1000 else "")) # Truncate for logs
@@ -639,7 +682,7 @@ async def github_webhook(
                         print(f"[INFO] Potentially actionable output from CodeFixer. Attempting to parse and apply changes for run {run_id} in {owner}/{repo_name}.")
                         
                         new_branch_name = f"codefixer-run-{run_id}-{current_head_sha[:7]}"
-                        pr_title = f"CodeFixer Auto-Fix for Workflow Run {run_id} (failed on {target_branch_for_fix})"
+                        pr_title = f"CTRL Z Auto-Fix for Failed Workflow Run {run_id} (failed on {target_branch_for_fix})"
                         base_branch_for_pr = repository.get("default_branch", "main")
                         if base_branch_for_pr != target_branch_for_fix:
                             print(f"[INFO] PR will be targeted at default branch '{base_branch_for_pr}', while failure was on '{target_branch_for_fix}'.")

@@ -10,6 +10,7 @@ from typing import List, Dict, Any
 
 load_dotenv()
 
+
 class LogAnalyzer:
     def __init__(self, model_name="gemini-1.5-flash-latest", temperature=0.2):
         """
@@ -82,15 +83,18 @@ Your response MUST begin *immediately* with `## Problem Statement` and adhere st
         for log_file_path in log_files:
             try:
                 content = log_file_path.read_text(encoding="utf-8")
-                all_log_contents.append(f"--- Log File: {log_file_path.name} ---\n{content}\n--- End Log File: {log_file_path.name} ---")
+                all_log_contents.append(
+                    f"--- Log File: {log_file_path.name} ---\n{content}\n--- End Log File: {log_file_path.name} ---")
             except Exception as e:
-                all_log_contents.append(f"--- Error reading log file: {log_file_path.name} ---\n{str(e)}\n--- End Error ---")
+                all_log_contents.append(
+                    f"--- Error reading log file: {log_file_path.name} ---\n{str(e)}\n--- End Error ---")
 
         combined_logs = "\n\n".join(all_log_contents)
 
         max_chars = 1000000
         if len(combined_logs) > max_chars:
-            print(f"Warning: Combined log length ({len(combined_logs)} chars) exceeds truncation threshold ({max_chars} chars). Truncating.")
+            print(
+                f"Warning: Combined log length ({len(combined_logs)} chars) exceeds truncation threshold ({max_chars} chars). Truncating.")
             combined_logs = combined_logs[:max_chars] + "\n... (logs truncated due to length)"
 
         if not combined_logs.strip():
@@ -123,15 +127,18 @@ Your response MUST begin *immediately* with `## Problem Statement` and adhere st
             try:
                 # read_text is blocking, run in thread for async compatibility
                 content = await asyncio.to_thread(log_file_path.read_text, encoding="utf-8")
-                all_log_contents.append(f"--- Log File: {log_file_path.name} ---\n{content}\n--- End Log File: {log_file_path.name} ---")
+                all_log_contents.append(
+                    f"--- Log File: {log_file_path.name} ---\n{content}\n--- End Log File: {log_file_path.name} ---")
             except Exception as e:
-                all_log_contents.append(f"--- Error reading log file: {log_file_path.name} ---\n{str(e)}\n--- End Error ---")
+                all_log_contents.append(
+                    f"--- Error reading log file: {log_file_path.name} ---\n{str(e)}\n--- End Error ---")
 
         combined_logs = "\n\n".join(all_log_contents)
 
         max_chars = 1000000
         if len(combined_logs) > max_chars:
-            print(f"Warning (async): Combined log length ({len(combined_logs)} chars) exceeds truncation threshold ({max_chars} chars). Truncating.")
+            print(
+                f"Warning (async): Combined log length ({len(combined_logs)} chars) exceeds truncation threshold ({max_chars} chars). Truncating.")
             combined_logs = combined_logs[:max_chars] + "\n... (logs truncated due to length)"
 
         if not combined_logs.strip():
@@ -144,6 +151,7 @@ Your response MUST begin *immediately* with `## Problem Statement` and adhere st
         except Exception as e:
             return f"Error during LLM invocation (async): {e}\nMake sure your GOOGLE_API_KEY is valid and the model is accessible."
 
+
 class CodeFixer:
     def __init__(self, model_name="gemini-1.5-flash-latest", temperature=0.3):
         """
@@ -152,8 +160,8 @@ class CodeFixer:
             model_name (str): The name of the Gemini model to use.
             temperature (float): The temperature for the LLM's generation.
         """
-        self.llm = None # Initialize to None
-        self.chain = None # Initialize to None
+        self.llm = None  # Initialize to None
+        self.chain = None  # Initialize to None
         try:
             self.llm = ChatGoogleGenerativeAI(model=model_name, temperature=temperature)
             print(f"CodeFixer agent initialized with model: {model_name}")
@@ -238,8 +246,8 @@ Reminder: Your output must be ONLY the full file content block(s) in the specifi
             self,
             log_analyzer_output: str,
             relevant_code_snippets: List[Dict[str, Any]],
-            workflow_yaml_content: str, # Full content of the workflow file
-            workflow_yaml_path: str,    # Path to the workflow file, e.g., .github/workflows/main.yml
+            workflow_yaml_content: str,  # Full content of the workflow file
+            workflow_yaml_path: str,  # Path to the workflow file, e.g., .github/workflows/main.yml
             target_branch: str
     ) -> str:
         """
@@ -269,9 +277,9 @@ Reminder: Your output must be ONLY the full file content block(s) in the specifi
                 snippet_path = snippet.get('file_path', 'Unknown file')
                 # The content here is the *original* content from RAG, which the LLM should use as a base.
                 content = snippet.get('chunk_content', '')
-                similarity = snippet.get('similarity', 0.0) # Similarity might be less relevant now but retain for info
+                similarity = snippet.get('similarity', 0.0)  # Similarity might be less relevant now but retain for info
                 formatted_list.append(
-                    f"Snippet {i+1}: File: `{snippet_path}` (Similarity: {similarity:.4f})\n"
+                    f"Snippet {i + 1}: File: `{snippet_path}` (Similarity: {similarity:.4f})\n"
                     f"Original Content of `{snippet_path}`:\n"
                     f"```\n{content}\n```"  # Ensure RAG provides full file content for this to be effective
                 )
@@ -312,8 +320,8 @@ Reminder: Your output must be ONLY the full file content block(s) in the specifi
             has_begin_end_markers = "==BEGIN FILE:" in response and "==END FILE:" in response
             has_delete_marker = "==DELETE FILE:" in response_stripped
             # Allow responses that are just a single delete instruction
-            is_single_delete_instruction = has_delete_marker and response_stripped.startswith("==DELETE FILE:") and response_stripped.count('\n') == 0
-
+            is_single_delete_instruction = has_delete_marker and response_stripped.startswith(
+                "==DELETE FILE:") and response_stripped.count('\n') == 0
 
             if has_begin_end_markers or is_single_delete_instruction:
                 if has_begin_end_markers:
@@ -321,13 +329,14 @@ Reminder: Your output must be ONLY the full file content block(s) in the specifi
                 if is_single_delete_instruction:
                     print("CodeFixer: LLM response appears to be a single delete file instruction.")
                 # We will return the raw response for app.py to parse into individual files.
-                return response # Return the full response, not just stripped
-            elif has_delete_marker : # has delete marker but not a clean single line or part of begin/end
+                return response  # Return the full response, not just stripped
+            elif has_delete_marker:  # has delete marker but not a clean single line or part of begin/end
                 print("CodeFixer: LLM response appears to contain delete file instruction(s).")
-                return response # Return the full response
+                return response  # Return the full response
 
             else:
-                print(f"CodeFixer Warning: LLM response did not conform to expected output structure (NO_CODE_FIX_POSSIBLE, BEGIN/END FILE blocks, or DELETE FILE). Response was: '{response_stripped[:500]}...'")
+                print(
+                    f"CodeFixer Warning: LLM response did not conform to expected output structure (NO_CODE_FIX_POSSIBLE, BEGIN/END FILE blocks, or DELETE FILE). Response was: '{response_stripped[:500]}...'")
                 return f"# LLM_RESPONSE_UNEXPECTED_FORMAT\n{response}"
 
         except Exception as e:

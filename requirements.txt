@@ -10,3 +10,7 @@ supabase
 GitPython
 tiktoken
 uvicorn
+paramiko
+openai
+dotenv
+google

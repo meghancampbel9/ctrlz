@@ -9,9 +9,11 @@ import base64
 import re
 from fastapi import FastAPI, Request, Header, HTTPException, BackgroundTasks
 from dotenv import load_dotenv
+import json
 from pathlib import Path
 from zipfile import ZipFile
 from io import BytesIO
+# from langchain_community.document_loaders import TextLoader
 from agents import LogAnalyzer, CodeFixer
 from supabase_service import check_if_repo_indexed, search_relevant_code_chunks, get_full_file_content_from_chunks, \
     get_supabase_client, get_embeddings_model  # Added imports

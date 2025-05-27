@@ -11,7 +11,6 @@ from supabase_service import get_workflow_logs_for_run
 
 load_dotenv()
 
-
 class LogAnalyzer:
     def __init__(self, model_name="gemini-1.5-flash-latest", temperature=0.2):
         """
@@ -85,7 +84,7 @@ Your response MUST begin *immediately* with `## Problem Statement` and adhere st
             log_filename = entry.get('log_filename', 'unknown_log_file.txt')
             content = entry.get('log_content', '')
             job_name = entry.get('job_name', 'N/A')
-            workflow_name = entry.get('workflow_name', 'N/A')  # Added workflow name
+            workflow_name = entry.get('workflow_name', 'N/A') # Added workflow name
 
             header = f"--- Log File: {log_filename} (Job: {job_name}, Workflow: {workflow_name}) ---"
             footer = f"--- End Log File: {log_filename} ---"
@@ -93,10 +92,9 @@ Your response MUST begin *immediately* with `## Problem Statement` and adhere st
 
         combined_logs = "\n\n".join(all_log_contents)
 
-        max_chars = 1000000  # Same truncation as before
+        max_chars = 1000000 # Same truncation as before
         if len(combined_logs) > max_chars:
-            print(
-                f"Warning (Supabase logs): Combined log length ({len(combined_logs)} chars) exceeds truncation threshold ({max_chars} chars). Truncating.")
+            print(f"Warning (Supabase logs): Combined log length ({len(combined_logs)} chars) exceeds truncation threshold ({max_chars} chars). Truncating.")
             combined_logs = combined_logs[:max_chars] + "\n... (logs truncated due to length)"
 
         if not combined_logs.strip():
@@ -108,7 +106,6 @@ Your response MUST begin *immediately* with `## Problem Statement` and adhere st
         except Exception as e_llm:
             return f"Error during LLM invocation with Supabase logs: {e_llm}\nMake sure your GOOGLE_API_KEY is valid and the model is accessible."
 
-
 class CodeFixer:
     def __init__(self, model_name="gemini-1.5-flash-latest", temperature=0.3):
         """
@@ -117,8 +114,8 @@ class CodeFixer:
             model_name (str): The name of the Gemini model to use.
             temperature (float): The temperature for the LLM's generation.
         """
-        self.llm = None  # Initialize to None
-        self.chain = None  # Initialize to None
+        self.llm = None # Initialize to None
+        self.chain = None # Initialize to None
         try:
             self.llm = ChatGoogleGenerativeAI(model=model_name, temperature=temperature)
             print(f"CodeFixer agent initialized with model: {model_name}")
@@ -200,12 +197,12 @@ Reminder: Your output must be ONLY the full file content block(s) in the specifi
             # Potentially re-raise or handle more gracefully if needed
 
     async def propose_fix(
-            self,
-            log_analyzer_output: str,
-            relevant_code_snippets: List[Dict[str, Any]],
-            workflow_yaml_content: str,  # Full content of the workflow file
-            workflow_yaml_path: str,  # Path to the workflow file, e.g., .github/workflows/main.yml
-            target_branch: str
+        self,
+        log_analyzer_output: str,
+        relevant_code_snippets: List[Dict[str, Any]],
+        workflow_yaml_content: str, # Full content of the workflow file
+        workflow_yaml_path: str,    # Path to the workflow file, e.g., .github/workflows/main.yml
+        target_branch: str
     ) -> str:
         """
         Analyzes the error report, workflow YAML, and relevant code snippets to propose a fix
@@ -234,9 +231,9 @@ Reminder: Your output must be ONLY the full file content block(s) in the specifi
                 snippet_path = snippet.get('file_path', 'Unknown file')
                 # The content here is the *original* content from RAG, which the LLM should use as a base.
                 content = snippet.get('chunk_content', '')
-                similarity = snippet.get('similarity', 0.0)  # Similarity might be less relevant now but retain for info
+                similarity = snippet.get('similarity', 0.0) # Similarity might be less relevant now but retain for info
                 formatted_list.append(
-                    f"Snippet {i + 1}: File: `{snippet_path}` (Similarity: {similarity:.4f})\n"
+                    f"Snippet {i+1}: File: `{snippet_path}` (Similarity: {similarity:.4f})\n"
                     f"Original Content of `{snippet_path}`:\n"
                     f"```\n{content}\n```"  # Ensure RAG provides full file content for this to be effective
                 )
@@ -277,23 +274,22 @@ Reminder: Your output must be ONLY the full file content block(s) in the specifi
             has_begin_end_markers = "==BEGIN FILE:" in response and "==END FILE:" in response
             has_delete_marker = "==DELETE FILE:" in response_stripped
             # Allow responses that are just a single delete instruction
-            is_single_delete_instruction = has_delete_marker and response_stripped.startswith(
-                "==DELETE FILE:") and response_stripped.count('\n') == 0
+            is_single_delete_instruction = has_delete_marker and response_stripped.startswith("==DELETE FILE:") and response_stripped.count('\n') == 0
+
 
             if has_begin_end_markers or is_single_delete_instruction:
                 if has_begin_end_markers:
                     print("CodeFixer: LLM response appears to contain file content blocks.")
                 if is_single_delete_instruction:
-                    print("CodeFixer: LLM response appears to be a single delete file instruction.")
+                     print("CodeFixer: LLM response appears to be a single delete file instruction.")
                 # We will return the raw response for app.py to parse into individual files.
-                return response  # Return the full response, not just stripped
-            elif has_delete_marker:  # has delete marker but not a clean single line or part of begin/end
-                print("CodeFixer: LLM response appears to contain delete file instruction(s).")
-                return response  # Return the full response
+                return response # Return the full response, not just stripped
+            elif has_delete_marker : # has delete marker but not a clean single line or part of begin/end
+                 print("CodeFixer: LLM response appears to contain delete file instruction(s).")
+                 return response # Return the full response
 
             else:
-                print(
-                    f"CodeFixer Warning: LLM response did not conform to expected output structure (NO_CODE_FIX_POSSIBLE, BEGIN/END FILE blocks, or DELETE FILE). Response was: '{response_stripped[:500]}...'")
+                print(f"CodeFixer Warning: LLM response did not conform to expected output structure (NO_CODE_FIX_POSSIBLE, BEGIN/END FILE blocks, or DELETE FILE). Response was: '{response_stripped[:500]}...'")
                 return f"# LLM_RESPONSE_UNEXPECTED_FORMAT\n{response}"
 
         except Exception as e:

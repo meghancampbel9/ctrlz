@@ -1,7 +1,12 @@
 # CtrlZ
 GitOps AI assistant acting as CtrlZ for production.
 
-Download the app here: https://github.com/apps/ctrlz-gitops
+[**Install the CtrlZ GitHub App**](https://github.com/apps/ctrlz-gitops)
+
+
+> ⚠️ **Important:**  
+> Currently, the backend is **not deployed** - it only works if **you (or I)** are running the server **locally**.  
+
 
 ## Features
 

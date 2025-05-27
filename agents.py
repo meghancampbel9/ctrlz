@@ -7,6 +7,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema.output_parser import StrOutputParser
 from typing import List, Dict, Any
+from supabase_service import get_workflow_logs_for_run
 
 load_dotenv()
 
@@ -59,97 +60,53 @@ Your response MUST begin *immediately* with `## Problem Statement` and adhere st
         ])
         self.chain = self.prompt_template | self.llm | StrOutputParser()
 
-    def analyze_log_directory(self, log_directory_path: str) -> str:
+    async def async_analyze_logs_from_supabase(self, run_id: int, repository_full_name: str) -> str:
         """
-        Reads all .txt log files from the specified directory,
+        Fetches logs from Supabase for a given run_id and repository,
         combines their content, and sends it to the LLM for analysis.
-
         Args:
-            log_directory_path (str): The path to the directory containing .txt log files.
+            run_id (int): The GitHub Actions workflow run ID.
+            repository_full_name (str): The full name of the repository (e.g., 'owner/repo').
 
         Returns:
             str: The analysis result from the LLM, or an error message.
         """
-        log_dir = Path(log_directory_path)
-        if not log_dir.is_dir():
-            return f"Error: Log directory '{log_directory_path}' not found or is not a directory."
+        print(f"LogAnalyzer: Fetching logs from Supabase for run {run_id}, repo {repository_full_name}")
+        try:
+            log_entries = await get_workflow_logs_for_run(run_id, repository_full_name)
+        except Exception as e_fetch:
+            return f"Error fetching logs from Supabase: {e_fetch}"
+
+        if not log_entries:
+            return f"No logs found in Supabase for run {run_id}, repo '{repository_full_name}'."
 
         all_log_contents = []
-        log_files = sorted(log_dir.glob("*.txt"))
+        for entry in log_entries:
+            log_filename = entry.get('log_filename', 'unknown_log_file.txt')
+            content = entry.get('log_content', '')
+            job_name = entry.get('job_name', 'N/A')
+            workflow_name = entry.get('workflow_name', 'N/A')  # Added workflow name
 
-        if not log_files:
-            return f"No .txt log files found in '{log_directory_path}'."
-
-        for log_file_path in log_files:
-            try:
-                content = log_file_path.read_text(encoding="utf-8")
-                all_log_contents.append(
-                    f"--- Log File: {log_file_path.name} ---\n{content}\n--- End Log File: {log_file_path.name} ---")
-            except Exception as e:
-                all_log_contents.append(
-                    f"--- Error reading log file: {log_file_path.name} ---\n{str(e)}\n--- End Error ---")
+            header = f"--- Log File: {log_filename} (Job: {job_name}, Workflow: {workflow_name}) ---"
+            footer = f"--- End Log File: {log_filename} ---"
+            all_log_contents.append(f"{header}\n{content}\n{footer}")
 
         combined_logs = "\n\n".join(all_log_contents)
 
-        max_chars = 1000000
+        max_chars = 1000000  # Same truncation as before
         if len(combined_logs) > max_chars:
             print(
-                f"Warning: Combined log length ({len(combined_logs)} chars) exceeds truncation threshold ({max_chars} chars). Truncating.")
+                f"Warning (Supabase logs): Combined log length ({len(combined_logs)} chars) exceeds truncation threshold ({max_chars} chars). Truncating.")
             combined_logs = combined_logs[:max_chars] + "\n... (logs truncated due to length)"
 
         if not combined_logs.strip():
-            return "Error: All log files were empty or unreadable."
+            return "Error: All log files from Supabase were empty or unreadable."
 
         try:
-            response = self.chain.invoke({"log_content": combined_logs})
-            return response
-        except Exception as e:
-            return f"Error during LLM invocation: {e}\nMake sure your GOOGLE_API_KEY is valid and the model is accessible."
-
-    async def async_analyze_log_directory(self, log_directory_path: str) -> str:
-        """
-        Asynchronously reads log files and sends to LLM for analysis.
-        """
-        log_dir = Path(log_directory_path)
-        if not log_dir.is_dir():
-            return f"Error: Log directory '{log_directory_path}' not found or is not a directory."
-
-        all_log_contents = []
-        # File I/O is blocking, run in executor for async context
-        # However, Path.glob is not easily awaitable. For simplicity, we keep this part sync
-        # but it should be fast.
-        log_files = await asyncio.to_thread(lambda: sorted(log_dir.glob("*.txt")))
-
-        if not log_files:
-            return f"No .txt log files found in '{log_directory_path}'."
-
-        for log_file_path in log_files:
-            try:
-                # read_text is blocking, run in thread for async compatibility
-                content = await asyncio.to_thread(log_file_path.read_text, encoding="utf-8")
-                all_log_contents.append(
-                    f"--- Log File: {log_file_path.name} ---\n{content}\n--- End Log File: {log_file_path.name} ---")
-            except Exception as e:
-                all_log_contents.append(
-                    f"--- Error reading log file: {log_file_path.name} ---\n{str(e)}\n--- End Error ---")
-
-        combined_logs = "\n\n".join(all_log_contents)
-
-        max_chars = 1000000
-        if len(combined_logs) > max_chars:
-            print(
-                f"Warning (async): Combined log length ({len(combined_logs)} chars) exceeds truncation threshold ({max_chars} chars). Truncating.")
-            combined_logs = combined_logs[:max_chars] + "\n... (logs truncated due to length)"
-
-        if not combined_logs.strip():
-            return "Error: All log files were empty or unreadable."
-
-        try:
-            # Use ainvoke for the asynchronous call
             response = await self.chain.ainvoke({"log_content": combined_logs})
             return response
-        except Exception as e:
-            return f"Error during LLM invocation (async): {e}\nMake sure your GOOGLE_API_KEY is valid and the model is accessible."
+        except Exception as e_llm:
+            return f"Error during LLM invocation with Supabase logs: {e_llm}\nMake sure your GOOGLE_API_KEY is valid and the model is accessible."
 
 
 class CodeFixer:
@@ -346,21 +303,3 @@ Reminder: Your output must be ONLY the full file content block(s) in the specifi
             return "Error during CodeFixer LLM analysis."
         finally:
             print("\n--- End CodeFixer --- \n")
-
-# Example of how RAG snippets should be structured if they contain full file content:
-# relevant_code_snippets = [
-#     {
-#         "file_path": "src/original_file.py",
-#         "chunk_content": "# Content of original_file.py...\nprint('hello')", # This should be the full original content
-#         "similarity": 0.9 # This might be an embedding similarity to the error, not diff similarity
-#     }
-# ]
-
-# It's CRITICAL that the RAG system (supabase_service.search_relevant_code_chunks)
-# is updated to return full file contents for the identified relevant files if this strategy is to work.
-# Otherwise, CodeFixer won't have the original full content to base its modifications on.
-# If RAG returns small chunks, CodeFixer might only be able to rewrite those small chunks,
-# or it might hallucinate the rest of the file, leading to incorrect fixes.
-# The prompt now tells the LLM that RAG snippets are original content.
-# The quality of the "workflow_yaml_content" and "relevant_code_snippets" (especially their completeness)
-# is paramount for the LLM to generate correct full file outputs.

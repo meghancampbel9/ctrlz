@@ -1,76 +1,245 @@
 import asyncio
 import httpx
-import openai
-from dotenv import load_dotenv
 import os
 import paramiko
+from dotenv import load_dotenv
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.prompts import ChatPromptTemplate
+from langchain.schema.output_parser import StrOutputParser
+import subprocess
+import os
+import datetime
+import requests
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.prompts import ChatPromptTemplate
+from langchain.schema.output_parser import StrOutputParser
 
 load_dotenv()
 
 EC2_HOST = os.getenv("EC2_HOST")
 EC2_USERNAME = os.getenv("EC2_USERNAME")
 EC2_KEY_PATH = os.getenv("EC2_KEY_PATH")
+LATEST_IMAGE = os.getenv("LATEST_IMAGE")
+STABLE_IMAGE = os.getenv("STABLE_IMAGE")
 
 APPS_TO_MONITOR = [
-    {"name": "myapp", "url": f"{EC2_HOST}/health", "rollback_cmd": "docker start myapp-good"}
+    {
+        "name": "myapp",
+        "url": f"http://{EC2_HOST}/health"
+    }
 ]
-openai.api_key = os.getenv("OPENAI_API_KEY")
+
+llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0.3)
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You're a DevOps assistant diagnosing why a Dockerized app failed."),
+    ("user", (
+        "Docker logs:\n\n{docker_logs}\n\n"
+        "Health check response:\n\n{health_response}\n\n"
+        "Please explain the most likely cause of failure in 1-2 sentences. "
+        "Tell me if you think it's an infrastructural or code issue and why."
+    ))
+])
+
+chain = prompt | llm | StrOutputParser()
+
+async def diagnose_failure(logs: str, health_response: str) -> str:
+    try:
+        result = await chain.ainvoke({
+            "docker_logs": logs,
+            "health_response": health_response
+        })
+        return result.strip()
+    except Exception as e:
+        return f"[DIAGNOSIS ERROR] Failed to analyze logs: {e}"
+
+
+def read_file_contents(filepath: str) -> str:
+    try:
+        with open(filepath, 'r') as f:
+            return f.read()
+    except Exception as e:
+        return f"ERROR reading file: {e}"
+
+
+async def analyze_failure(health_response: str, logs: str, code_text: str) -> str:
+    result = await chain.ainvoke({
+        "health_response": health_response,
+        "docker_logs": logs,
+        "code_text": code_text
+    })
+    return result.strip()
+
+
+async def fetch_docker_logs_and_status(app):
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.connect(hostname=EC2_HOST, username=EC2_USERNAME, key_filename=EC2_KEY_PATH)
+
+    _, stdout, _ = ssh.exec_command(f"docker inspect -f '{{{{.State.Status}}}}' {app['name']}")
+    status = stdout.read().decode().strip()
+    print(f"[INFO] Status for {app['name']}: {status}")
+
+    if status == "exited":
+        _, stdout, _ = ssh.exec_command(f"docker inspect -f '{{{{.State.ExitCode}}}}' {app['name']}")
+        exit_code = int(stdout.read().decode().strip())
+    else:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                r = await client.get(app["url"])
+                if r.status_code != 200:
+                    print(f"[INFO] App is running but unhealthy (status {r.status_code})")
+                    exit_code = 0
+                else:
+                    exit_code = 200
+        except Exception as e:
+            print(f"[ERROR] Health check failed while running: {e}")
+            exit_code = 0
+
+    _, stdout, _ = ssh.exec_command(f"docker logs {app['name']}")
+    logs = stdout.read().decode()
+
+    ssh.close()
+    return status, exit_code, logs
+
+
+async def restart_latest(app):
+    print(f"[ACTION] Restarting latest image for {app['name']} (attempting to fix health check failure)...")
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.connect(hostname=EC2_HOST, username=EC2_USERNAME, key_filename=EC2_KEY_PATH)
+
+    restart_cmd = f"""
+      docker stop {app['name']} || true
+      docker rm {app['name']} || true
+      docker pull {LATEST_IMAGE} || true
+      docker run -d --name {app['name']} -p 80:80 --restart=always {LATEST_IMAGE} || true
+    """
+    ssh.exec_command(restart_cmd)
+    print(f"[INFO] Restart command executed for {app['name']}.")
+    ssh.close()
+
+
+async def restart_stable(app):  # This function is not used currently
+    print(f"[ACTION] Restarting stable image for {app['name']}")
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.connect(hostname=EC2_HOST, username=EC2_USERNAME, key_filename=EC2_KEY_PATH)
+
+    restart_cmd = (
+        f"docker stop {app['name']} || true && "  # Fixed typo here
+        f"docker rm {app['name']} || true && "
+        f"docker run -d --name {app['name']} -p 80:80 {STABLE_IMAGE}"
+    )
+    ssh.exec_command(restart_cmd)
+    ssh.close()
+    print(f"[PAUSE] Waiting 30 seconds after stable restart for {app['name']}")
+    await asyncio.sleep(30)
+
+
+async def get_health_response(app) -> str:
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(app["url"])
+            return f"{r.status_code} {r.text}"
+    except Exception as e:
+        return f"ERROR: {e} - Check if the application is running and listening on port 80"
+
 
 async def poll_loop():
     while True:
         for app in APPS_TO_MONITOR:
             try:
                 async with httpx.AsyncClient(timeout=5) as client:
-                    r = await client.get(app["url"])
+                    r = await client.get(app["url"], timeout=5)
                     if r.status_code != 200:
-                        print("Application not healthy, fetching docker logs")
-                        fetch_docker_logs()
+                        print(f"[!] Health check failed for {app['name']} (HTTP {r.status_code}), analyzing...")
+                        status, exit_code, logs = await fetch_docker_logs_and_status(app)
+
+                        if exit_code in (0, 1):
+                            health_response = await get_health_response(app)
+                            diagnosis = await diagnose_failure(logs, health_response)
+                            print(f"[AI Diagnosis]: {diagnosis}")
+                            #await restart_stable(app)
+
+                        elif exit_code == 137:
+                            await restart_latest(app)
+                        elif exit_code == 200:
+                            print(f"[OK] {app['name']} appears healthy.")
+                        else:
+                            print(f"[WARN] Unknown state for {app['name']}. Restarting as precaution.")
+                            await restart_latest(app)
                     else:
-                        print("Application healthy")
-                        print(fetch_docker_logs())
+                        print(f"[OK] {app['name']} is healthy")
             except Exception as e:
-                print(f"[!] Error checking {app['name']}: {e}")
-        await asyncio.sleep(5)
+                print(f"[ERROR] Exception occurred during health check: {e}. Checking container state...")
+                status, exit_code, logs = await fetch_docker_logs_and_status(app)
+                if exit_code in (0, 1):
+                    health_response = await get_health_response(app)
+                    diagnosis = await diagnose_failure(logs, health_response)
+                    print(f"[AI Diagnosis]: {diagnosis}")
+                    #await restart_stable(app)
+                elif exit_code == 137:
+                    await restart_latest(app)
+        await asyncio.sleep(30)  # Increased sleep time to allow for container restart and health check
 
 
-def fetch_docker_logs() -> str:
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect(
-        hostname=EC2_HOST,
-        username=EC2_USERNAME,
-        key_filename=EC2_KEY_PATH
-    )
+def apply_patch_and_push_branch(patch_path="suggested_fix.patch", repo_path="."):
+    branch_name = f"auto-fix-health-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    print(f"[INFO] Creating branch: {branch_name}")
 
-    cmd = f"docker logs myapp"
-    stdin, stdout, stderr = ssh.exec_command(cmd)
-    logs = stdout.read().decode()
-    error = stderr.read().decode()
+    try:
+        subprocess.run(["git", "apply", patch_path], check=True, cwd=repo_path)
+        print("[INFO] Patch applied successfully.")
 
-    ssh.close()
+        subprocess.run(["git", "add", "."], check=True, cwd=repo_path)
+        subprocess.run(["git", "checkout", "-b", branch_name], check=True, cwd=repo_path)
 
-    if error and not logs:
-        raise RuntimeError(f"Failed to fetch logs: {error}")
+        subprocess.run(["git", "add", "."], check=True, cwd=repo_path)
+        subprocess.run(["git", "commit", "-m", "Auto-generated health check fix"], check=True, cwd=repo_path)
+        subprocess.run(["git", "push", "-u", "origin", branch_name], check=True, cwd=repo_path)
+
+        print(f"[SUCCESS] Patch pushed to new branch: {branch_name}")
+        return branch_name
+    except subprocess.CalledProcessError as e:
+        print(f"[ERROR] Git operation failed: {e}")
+        return None
+
+
+def create_pull_request(branch_name: str, patch_summary: str = "Auto-fix: health check improvement"):
+    import time  # This import is already present in the file
+    import json
+
+    token = os.getenv("GITHUB_TOKEN")
+    repo = "a-juchaczkombo/hackathon-demo-app"
+    base_branch = "main"
+
+    if not all([token, repo, branch_name]):
+        print("[ERROR] Missing GitHub configuration.")
+        return
+
+    url = f"https://api.github.com/repos/{repo}/pulls"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json"
+    }
+
+    data = {
+        "title": patch_summary,
+        "head": f"a-juchaczkombo:{branch_name}",  # <username>:<branch>
+        "base": base_branch,
+        "body": "This PR was auto-generated by a health monitoring bot to fix a failing deployment health check."
+    }
+
+    print("[INFO] Waiting for branch to propagate...")
+    time.sleep(5)
+
+    response = requests.post(url, json=data, headers=headers)
+    if response.status_code == 201:
+        print(f"[✅] Pull request created: {response.json()['html_url']}")
     else:
-        print(analyze_logs_with_gpt(logs))
-
-    return logs
+        print(f"[ERROR] Failed to create PR: {response.status_code} - {response.text}")
 
 
-def rollback_app(app):
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect("3.76.115.47", username="ubuntu", key_filename="ubuntu.pem")
-    ssh.exec_command(app["rollback_cmd"])
-    ssh.close()
-
-def analyze_logs_with_gpt(logs: str) -> str:
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": "You are a DevOps expert helping to analyze Docker container crash logs."},
-            {"role": "user", "content": f"My app failed. Here are the logs:\n\n{logs}"}
-        ],
-        max_tokens=300
-    )
-    return response.choices[0].message.content.strip()
+if __name__ == "__main__":
+    asyncio.run(poll_loop())

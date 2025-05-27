@@ -10,6 +10,7 @@ from typing import List, Dict, Any
 
 load_dotenv()
 
+
 class LogAnalyzer:
     def __init__(self, model_name="gemini-2.5-pro-preview-03-25", temperature=0.2):
         """
@@ -82,17 +83,20 @@ Your response MUST begin *immediately* with `## Problem Statement` and adhere st
         for log_file_path in log_files:
             try:
                 content = log_file_path.read_text(encoding="utf-8")
-                all_log_contents.append(f"--- Log File: {log_file_path.name} ---\n{content}\n--- End Log File: {log_file_path.name} ---")
+                all_log_contents.append(
+                    f"--- Log File: {log_file_path.name} ---\n{content}\n--- End Log File: {log_file_path.name} ---")
             except Exception as e:
-                all_log_contents.append(f"--- Error reading log file: {log_file_path.name} ---\n{str(e)}\n--- End Error ---")
+                all_log_contents.append(
+                    f"--- Error reading log file: {log_file_path.name} ---\n{str(e)}\n--- End Error ---")
 
         combined_logs = "\n\n".join(all_log_contents)
 
-        max_chars = 1000000 
+        max_chars = 1000000
         if len(combined_logs) > max_chars:
-            print(f"Warning: Combined log length ({len(combined_logs)} chars) exceeds truncation threshold ({max_chars} chars). Truncating.")
+            print(
+                f"Warning: Combined log length ({len(combined_logs)} chars) exceeds truncation threshold ({max_chars} chars). Truncating.")
             combined_logs = combined_logs[:max_chars] + "\n... (logs truncated due to length)"
-        
+
         if not combined_logs.strip():
             return "Error: All log files were empty or unreadable."
 
@@ -123,17 +127,20 @@ Your response MUST begin *immediately* with `## Problem Statement` and adhere st
             try:
                 # read_text is blocking, run in thread for async compatibility
                 content = await asyncio.to_thread(log_file_path.read_text, encoding="utf-8")
-                all_log_contents.append(f"--- Log File: {log_file_path.name} ---\n{content}\n--- End Log File: {log_file_path.name} ---")
+                all_log_contents.append(
+                    f"--- Log File: {log_file_path.name} ---\n{content}\n--- End Log File: {log_file_path.name} ---")
             except Exception as e:
-                all_log_contents.append(f"--- Error reading log file: {log_file_path.name} ---\n{str(e)}\n--- End Error ---")
+                all_log_contents.append(
+                    f"--- Error reading log file: {log_file_path.name} ---\n{str(e)}\n--- End Error ---")
 
         combined_logs = "\n\n".join(all_log_contents)
 
         max_chars = 1000000
         if len(combined_logs) > max_chars:
-            print(f"Warning (async): Combined log length ({len(combined_logs)} chars) exceeds truncation threshold ({max_chars} chars). Truncating.")
+            print(
+                f"Warning (async): Combined log length ({len(combined_logs)} chars) exceeds truncation threshold ({max_chars} chars). Truncating.")
             combined_logs = combined_logs[:max_chars] + "\n... (logs truncated due to length)"
-        
+
         if not combined_logs.strip():
             return "Error: All log files were empty or unreadable."
 
@@ -144,6 +151,7 @@ Your response MUST begin *immediately* with `## Problem Statement` and adhere st
         except Exception as e:
             return f"Error during LLM invocation (async): {e}\nMake sure your GOOGLE_API_KEY is valid and the model is accessible."
 
+
 class CodeFixer:
     def __init__(self, model_name="gemini-2.5-pro-preview-03-25", temperature=0.3):
         """
@@ -152,8 +160,8 @@ class CodeFixer:
             model_name (str): The name of the Gemini model to use.
             temperature (float): The temperature for the LLM's generation.
         """
-        self.llm = None # Initialize to None
-        self.chain = None # Initialize to None
+        self.llm = None  # Initialize to None
+        self.chain = None  # Initialize to None
         try:
             self.llm = ChatGoogleGenerativeAI(model=model_name, temperature=temperature)
             print(f"CodeFixer agent initialized with model: {model_name}")
@@ -234,12 +242,12 @@ Reminder: Your output must be ONLY the diff block(s) or the string `NO_CODE_FIX_
             # Potentially re-raise or handle more gracefully if needed
 
     async def propose_fix(
-        self,
-        log_analyzer_output: str,
-        relevant_code_snippets: List[Dict[str, Any]],
-        workflow_yaml_content: str, # Full content of the workflow file
-        workflow_yaml_path: str,    # Path to the workflow file, e.g., .github/workflows/main.yml
-        target_branch: str
+            self,
+            log_analyzer_output: str,
+            relevant_code_snippets: List[Dict[str, Any]],
+            workflow_yaml_content: str,  # Full content of the workflow file
+            workflow_yaml_path: str,  # Path to the workflow file, e.g., .github/workflows/main.yml
+            target_branch: str
     ) -> str:
         """
         Analyzes the error report, workflow YAML, and relevant code snippets to propose a fix.
@@ -266,11 +274,11 @@ Reminder: Your output must be ONLY the diff block(s) or the string `NO_CODE_FIX_
                 content = snippet.get('chunk_content', '')
                 similarity = snippet.get('similarity', 0.0)
                 formatted_list.append(
-                    f"Snippet {i+1}: File: `{snippet_path}` (Similarity: {similarity:.4f})\n"
+                    f"Snippet {i + 1}: File: `{snippet_path}` (Similarity: {similarity:.4f})\n"
                     f"```\n{content}\n```"
                 )
             rag_snippets_formatted = "\n\n".join(formatted_list)
-        
+
         # Prepare inputs for the prompt
         prompt_inputs = {
             "log_analyzer_output": log_analyzer_output,
@@ -289,19 +297,19 @@ Reminder: Your output must be ONLY the diff block(s) or the string `NO_CODE_FIX_
         try:
             response = await self.chain.ainvoke(prompt_inputs)
             print("--- CodeFixer LLM Raw Response ---")
-            print(response) # Print the raw response for now
+            print(response)  # Print the raw response for now
             print("--- End CodeFixer LLM Raw Response ---")
-            
+
             # Try to extract the last valid diff block
             # A diff block is ```diff\n...\n```
             # We look for all such blocks and take the last one that seems valid.
             diff_blocks = re.findall(r"```diff\n(.*?)\n```", response, re.DOTALL)
-            
+
             if not diff_blocks:
                 if response.strip() == "NO_CODE_FIX_POSSIBLE":
                     return response.strip()
                 print(f"CodeFixer Warning: LLM response did not contain any ```diff ... ``` blocks.")
-                return f"# LLM_RESPONSE_NO_DIFF_BLOCKS\n{response}" # Return raw if no blocks
+                return f"# LLM_RESPONSE_NO_DIFF_BLOCKS\n{response}"  # Return raw if no blocks
 
             # Iterate from the last found block to the first
             for block_content in reversed(diff_blocks):
@@ -311,13 +319,13 @@ Reminder: Your output must be ONLY the diff block(s) or the string `NO_CODE_FIX_
                     extracted_diff = f"```diff\n{block_content.strip()}\n```"
                     print(f"CodeFixer: Extracted the following diff block:\n{extracted_diff}")
                     return extracted_diff
-            
+
             # If no valid diff block was found among the candidates
-            if response.strip() == "NO_CODE_FIX_POSSIBLE": # Check again in case it was outside blocks
+            if response.strip() == "NO_CODE_FIX_POSSIBLE":  # Check again in case it was outside blocks
                 return response.strip()
-                
+
             print(f"CodeFixer Warning: Found diff blocks, but none seemed valid (missing '--- a/' or '+++ b/').")
-            return f"# LLM_RESPONSE_INVALID_DIFF_BLOCKS\n{response}" # Or return the last block found, or raw response
+            return f"# LLM_RESPONSE_INVALID_DIFF_BLOCKS\n{response}"  # Or return the last block found, or raw response
 
         except Exception as e:
             print(f"Error during CodeFixer LLM invocation: {e}")

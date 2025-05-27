@@ -5,7 +5,7 @@ GitOps AI assistant acting as CtrlZ for production.
 
 
 > ⚠️ **Important:**  
-> Currently, the backend is **not deployed** - it only works if **you (or I)** are running the server **locally**.  
+> Currently, the backend is **not deployed** - it only works if it is being run **locally**.  
 
 
 ## Features

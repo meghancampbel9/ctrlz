@@ -5,7 +5,12 @@ Download the app here: https://github.com/apps/ctrlz-gitops
 
 ## Features
 
-CtrlZ monitors your GitHub repositories and takes action when workflow runs fail. Here's a breakdown of its process:
+CtrlZ monitors your GitHub repositories and takes action when workflow runs fail. 
+
+![Screenshot from 2025-05-27 16-24-44](https://github.com/user-attachments/assets/63ab2506-bf52-4591-bfc6-4ae2b0b861a2)
+
+
+Here's a breakdown of its process:
 
 1.  **Webhook Event Handling:**
     *   Listens for GitHub webhook events, primarily `workflow_run` (when a run completes with a failure) and `repository` (for initial indexing).

@@ -6,16 +6,18 @@ from typing import List, Dict, Tuple
 import git # GitPython
 import asyncio
 
-from supabase_service import (
+from services.db.indexed_repositories_service import (
     update_repository_indexing_status,
-    store_code_chunks_batch,
-    chunk_file_content,
-    embed_chunks,
-    calculate_file_hash,
-    get_indexed_file_hashes,
-    delete_chunks_for_file,
-    # delete_all_chunks_for_repo # Might be useful for full re-index
+    get_indexed_file_hashes
 )
+from services.db.code_chunks_service import (
+    store_code_chunks_batch,
+    delete_chunks_for_file,
+    delete_all_chunks_for_repo
+)
+from services.utils.text_processing import chunk_file_content, calculate_file_hash
+from services.core.embedding_service import embed_chunks
+from services.core.supabase_client import get_supabase_client
 
 # Define file extensions to include for indexing (can be expanded)
 # Using a set for efficient lookup
@@ -25,7 +27,6 @@ RELEVANT_EXTENSIONS = {
     ".sh", ".bash", ".zsh", ".fish",
     ".md", ".txt", ".json", ".yaml", ".yml", ".xml", ".html", ".css", ".scss",
     ".dockerfile", "Dockerfile", ".tf", ".hcl"
-    # Add more as needed, consider common config files too
 }
 
 # Define directories and specific files/patterns to always ignore
@@ -267,46 +268,3 @@ async def process_single_file(repo_id: str, commit_sha: str, relative_file_path:
     except Exception as e:
         print(f"Error processing file {relative_file_path} in {repo_id}: {e}")
         # Optionally, update a per-file status if needed, or let the main error handler catch it.
-
-# --- Example Usage (for testing this module directly) ---
-if __name__ == '__main__':
-    # Ensure you have a .env file with SUPABASE_URL, SUPABASE_SERVICE_KEY, GOOGLE_API_KEY
-    # And a test repository URL (public for no token, or set up a token for private)
-    TEST_REPO_URL = "https://github.com/langchain-ai/langchain.git" # A large public repo
-    TEST_REPO_ID = "langchain-ai/langchain_test_indexer"
-    TEST_OWNER = "langchain-ai"
-    TEST_REPO_NAME = "langchain_test_indexer"
-    TEST_BRANCH = "master" # or "main"
-
-    # To test with a private repo, you'd need a valid installation_token for that repo
-    # TEST_PRIVATE_REPO_URL = "https://github.com/your_org/your_private_repo.git"
-    # TEST_PRIVATE_REPO_ID = "your_org/your_private_repo"
-    # TEST_PRIVATE_OWNER = "your_org"
-    # TEST_PRIVATE_REPO_NAME = "your_private_repo"
-    # INSTALLATION_TOKEN = os.getenv("YOUR_GITHUB_INSTALLATION_TOKEN") # Get this dynamically in app.py
-
-    async def run_test_indexing():
-        print("Starting test indexing...")
-        # Before running, you might want to clean up previous test data in Supabase for this TEST_REPO_ID
-        from supabase_service import get_supabase_client, delete_all_chunks_for_repo, supabase # Import supabase client directly for this
-        # supabase_client = get_supabase_client()
-        if supabase: # Check if supabase client from supabase_service is available
-            print(f"Cleaning up old chunks for {TEST_REPO_ID}...")
-            await delete_all_chunks_for_repo(TEST_REPO_ID) # This is an async function from supabase_service
-            print(f"Cleaning up old repository record for {TEST_REPO_ID}...")
-            # The direct supabase client call is synchronous
-            supabase.table("indexed_repositories").delete().eq("repo_id", TEST_REPO_ID).execute()
-        else:
-            print("Supabase client not available for cleanup.")
-            # return # Optionally return if cleanup is critical before test
-
-        await process_repository(
-            repo_url=TEST_REPO_URL, 
-            repo_id=TEST_REPO_ID, 
-            owner=TEST_OWNER, 
-            repo_name=TEST_REPO_NAME, 
-            branch=TEST_BRANCH
-        )
-        print(f"Test indexing finished for {TEST_REPO_ID}.")
-
-    asyncio.run(run_test_indexing()) 

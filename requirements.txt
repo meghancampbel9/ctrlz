@@ -10,3 +10,4 @@ supabase
 GitPython
 tiktoken
 uvicorn
+langchain-google-vertexai

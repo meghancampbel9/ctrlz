@@ -11,7 +11,7 @@ from typing import List, Dict, Any
 load_dotenv()
 
 class LogAnalyzer:
-    def __init__(self, model_name="gemini-2.5-pro-preview-03-25", temperature=0.2):
+    def __init__(self, model_name="gemini-1.5-flash-latest", temperature=0.2):
         """
         Initializes the LogAnalyzer agent.
         Args:
@@ -145,7 +145,7 @@ Your response MUST begin *immediately* with `## Problem Statement` and adhere st
             return f"Error during LLM invocation (async): {e}\nMake sure your GOOGLE_API_KEY is valid and the model is accessible."
 
 class CodeFixer:
-    def __init__(self, model_name="gemini-2.5-pro-preview-03-25", temperature=0.3):
+    def __init__(self, model_name="gemini-1.5-flash-latest", temperature=0.3):
         """
         Initializes the CodeFixer agent.
         Args:
@@ -160,56 +160,57 @@ class CodeFixer:
 
             self.prompt_template = ChatPromptTemplate.from_messages([
                 ("system", """You are an expert AI assistant specializing in diagnosing and fixing GitHub Actions workflow failures.
-Your task is to analyze the provided information and propose a precise code fix.
+Your task is to analyze the provided information and propose a precise code fix by outputting the complete modified file content.
 
 **Input Context:**
 1.  **Log Analyzer Report:** This contains a problem statement, key log snippets, and suspected files based on the raw logs.
-2.  **Workflow YAML Content:** The full content of the GitHub Actions workflow YAML file that failed.
-3.  **Relevant Code Snippets (RAG):** These are chunks of code from the repository, identified as potentially relevant by a semantic search. Each snippet includes its file path and content.
+2.  **Workflow YAML Content:** The full content of the GitHub Actions workflow YAML file that failed. This is provided in `{workflow_yaml_path}`.
+3.  **Relevant Code Snippets (RAG):** These are chunks of code from the repository, identified as potentially relevant by a semantic search. Each snippet includes its file path and its *original* content. You should use this original content as the basis for your modifications. If a file mentioned in the Log Analyzer report or workflow YAML is also present in these snippets, prioritize using the content from the RAG snippets as the most accurate original version.
 4.  **Target Branch:** The branch where the failure occurred and where the fix should be applied.
 
 **Your Goal:**
-Generate a concise and actionable code fix.
+Generate the complete, modified content for each file that needs to be changed.
 
 **Output Format Requirements:**
-Your response MUST be a Markdown block containing ONLY a code diff in the following format:
-```diff
---- a/path/to/original/file.py
-+++ b/path/to/modified/file.py
-@@ -line_start,num_lines @@ -line_start,num_lines @@
- # ... some context lines (unchanged) ...
- -old_line_to_remove
- +new_line_to_add
- # ... more context lines (unchanged) ...
-```
-- **Context Lines:** Unchanged lines shown for context MUST start with a single space character. For example: ` unchanged_line_content`.
-- If multiple files need changes, provide multiple diff blocks.
-- If the fix involves creating a new file, use `/dev/null` for the `--- a/` path.
-- If the fix involves deleting a file, use `/dev/null` for the `+++ b/` path.
-- Ensure the file paths in the diff are relative to the repository root.
+- Your response MUST consist of one or more file blocks, or a delete instruction, or the string "NO_CODE_FIX_POSSIBLE".
+- Each file block representing a modification or creation MUST start with a header line: `==BEGIN FILE:/path/to/modified/file.ext==` where `/path/to/modified/file.ext` is the repository-relative path of the file.
+- Immediately following the header line, you MUST provide the ENTIRE new content for that file.
+- Each file block MUST end with a footer line: `==END FILE:/path/to/modified/file.ext==`.
+- Example for a single file modification:
+  ```
+==BEGIN FILE:src/app.py==
+# This is the full new content of src/app.py
+# including all original lines that were not changed,
+# and all new/modified lines.
+print("Hello, corrected world!")
+==END FILE:src/app.py==
+  ```
+- If multiple files need changes, provide multiple such blocks sequentially.
+- If the fix involves creating a new file, use the intended new file path in the `==BEGIN FILE:/path/to/new/file.ext==` header and provide its full content.
+- If the fix involves deleting a file, you MUST output ONLY a single line in the format: `==DELETE FILE:/path/to/delete/file.ext==`. If multiple files are to be deleted, provide one such line for each.
+- Ensure the file paths are relative to the repository root.
 
 **Analysis and Fix Generation Steps:**
-1.  **Understand the Core Problem:** Use the "Problem Statement" from the Log Analyzer Report as your starting point.
-2.  **Corroborate with Workflow YAML:** Examine the `workflow_yaml_content`. Identify the specific job and step that failed. The Log Analyzer's "Suspected Files/Components" might point to a script executed by a step in this YAML.
+1.  **Understand the Core Problem:** Use the "Problem Statement" from the Log Analyzer Report.
+2.  **Corroborate with Workflow YAML:** Examine the `workflow_yaml_content`. Its path is `{workflow_yaml_path}`. If this file needs changes, use this path in your output.
 3.  **Leverage RAG Snippets:**
-    *   Review the `relevant_code_snippets`. These are your primary source for identifying the actual code to modify.
-    *   The file paths in the snippets are crucial. Prioritize fixes in files that appear in both the RAG snippets and are logically connected to the failing workflow step (e.g., a script run by `run:` command in the YAML).
+    *   Review `relevant_code_snippets`. These provide the original content of potentially relevant files.
+    *   Identify the file(s) to modify based on the problem and the RAG snippets.
 4.  **Formulate the Fix:**
-    *   Determine the *exact* lines that need to change.
-    *   If a script run by the workflow failed (e.g., identified via `deploy_X_script_name.txt` in logs and RAG snippets of that script), propose changes to that script.
-    *   If the workflow YAML itself is the problem, propose changes to `workflow_yaml_content` (using its original path, likely `.github/workflows/your_workflow_file.yml`).
-5.  **Construct the Diff:** Adhere strictly to the diff format. Include a few lines of context around your changes.
-    - **Hunk Headers Accuracy:** The line numbers in `@@ -original_start,original_length +new_start,new_length @@` hunk headers MUST be accurate relative to the start of the *entire original file content* provided in the `workflow_yaml_content` or RAG snippets. Incorrect hunk headers will lead to failed patch application.
+    *   Determine the necessary changes.
+    *   Construct the *complete new content* for each modified file. This means if a file is 100 lines long and you change 2 lines, you output all 100 lines with the 2 changes incorporated.
+    *   If the workflow YAML itself is the problem (its path is `{workflow_yaml_path}`), provide its complete modified content using its path.
+5.  **Construct the Output:** Adhere strictly to the `==BEGIN FILE...==` / `==END FILE...==` or `==DELETE FILE...==` format.
 
 **Important Considerations:**
-- **Specificity:** Your proposed fix MUST be a concrete code change. Do not provide explanations, apologies, or general advice. ONLY the diff.
-- **File Paths:** Ensure the file paths in your diff (`--- a/path/to/file` and `+++ b/path/to/file`) are accurate and relative to the repository root. The RAG snippets provide these paths.
-- **No Fix Possible:** If, after careful analysis, you determine that a code fix is not possible based on the provided information (e.g., external service issue, transient error not code-related, insufficient context despite RAG), output ONLY the following string:
+- **Specificity:** Your proposed fix MUST be the complete file content(s) or delete instructions in the specified format. Do not provide explanations, apologies, or general advice. ONLY the specified file blocks, delete instructions, or "NO_CODE_FIX_POSSIBLE".
+- **File Paths:** Ensure the file paths in your `==BEGIN FILE:/path/to/file==`, `==END FILE:/path/to/file==`, and `==DELETE FILE:/path/to/file==` markers are accurate and relative to the repository root. The RAG snippets provide paths for files they contain, and the workflow YAML path is `{workflow_yaml_path}`.
+- **No Fix Possible:** If, after careful analysis, you determine that a code fix is not possible based on the provided information, output ONLY the following string:
   `NO_CODE_FIX_POSSIBLE`
 
-**Target Branch Context:** The fix will be applied to the branch: `{target_branch}`. This is for your context; do not include it in the diff output.
+**Target Branch Context:** The fix will be applied to the branch: `{target_branch}`. This is for your context; do not include it in your output.
 """),
-                ("user", """Analyze the following information and generate a code fix as a diff.
+                ("user", """Analyze the following information and generate the full modified file content(s) or delete instructions.
 
 **1. Log Analyzer Report:**
 ```markdown
@@ -221,10 +222,10 @@ Your response MUST be a Markdown block containing ONLY a code diff in the follow
 {workflow_yaml_content}
 ```
 
-**3. Relevant Code Snippets (from RAG search):**
+**3. Relevant Code Snippets (from RAG search - these are the original versions of files in the codebase):**
 {rag_snippets_formatted}
 
-Reminder: Your output must be ONLY the diff block(s) or the string `NO_CODE_FIX_POSSIBLE`.""")
+Reminder: Your output must be ONLY the full file content block(s) in the specified `==BEGIN FILE...==` / `==END FILE...==` format, `==DELETE FILE...==` instructions, or the string `NO_CODE_FIX_POSSIBLE`.""")
             ])
             self.chain = self.prompt_template | self.llm | StrOutputParser()
 
@@ -242,32 +243,37 @@ Reminder: Your output must be ONLY the diff block(s) or the string `NO_CODE_FIX_
         target_branch: str
     ) -> str:
         """
-        Analyzes the error report, workflow YAML, and relevant code snippets to propose a fix.
+        Analyzes the error report, workflow YAML, and relevant code snippets to propose a fix
+        by returning the full content of modified files or a delete instruction.
         Args:
             log_analyzer_output (str): The structured Markdown output from LogAnalyzer.
             relevant_code_snippets (List[Dict[str, Any]]): Top k relevant code snippets from RAG.
+                                                           Each snippet should contain 'file_path' and 'chunk_content' (original full content).
             workflow_yaml_content (str): The content of the workflow YAML file associated with the failed run.
             workflow_yaml_path (str): The repository-relative path of the workflow YAML file.
             target_branch (str): The branch on which the failure occurred.
         Returns:
-            str: A proposed code fix in diff format or "NO_CODE_FIX_POSSIBLE".
+            str: A string containing the LLM's direct response, which is expected to be
+                 one or more file content blocks (e.g., ==BEGIN FILE...== ... ==END FILE...==),
+                 delete instructions (e.g., ==DELETE FILE...==), or "NO_CODE_FIX_POSSIBLE".
         """
-        print("\n--- CodeFixer: Propose Fix --- ")
-        # The detailed prints previously here are now part of the prompt construction
+        print("\n--- CodeFixer: Propose Fix (Outputting Full Files) --- ")
 
         if not self.chain:
             return "CodeFixer LLM chain not initialized. Cannot propose fix."
 
-        rag_snippets_formatted = "No relevant code snippets provided."
+        rag_snippets_formatted = "No relevant code snippets from the codebase were provided for context."
         if relevant_code_snippets:
             formatted_list = []
             for i, snippet in enumerate(relevant_code_snippets):
                 snippet_path = snippet.get('file_path', 'Unknown file')
-                content = snippet.get('chunk_content', '')
-                similarity = snippet.get('similarity', 0.0)
+                # The content here is the *original* content from RAG, which the LLM should use as a base.
+                content = snippet.get('chunk_content', '') 
+                similarity = snippet.get('similarity', 0.0) # Similarity might be less relevant now but retain for info
                 formatted_list.append(
                     f"Snippet {i+1}: File: `{snippet_path}` (Similarity: {similarity:.4f})\n"
-                    f"```\n{content}\n```"
+                    f"Original Content of `{snippet_path}`:\n"
+                    f"```\n{content}\n```"  # Ensure RAG provides full file content for this to be effective
                 )
             rag_snippets_formatted = "\n\n".join(formatted_list)
         
@@ -280,44 +286,49 @@ Reminder: Your output must be ONLY the diff block(s) or the string `NO_CODE_FIX_
             "target_branch": target_branch
         }
 
-        print(f"CodeFixer: Invoking LLM for branch '{target_branch}'.")
+        print(f"CodeFixer: Invoking LLM for branch '{target_branch}'. Expecting full file content output.")
         # For debugging the exact input to the LLM if needed:
         # print("--- CodeFixer Prompt Input ---")
-        # print(self.prompt_template.format_prompt(**prompt_inputs).to_string())
+        # current_prompt_string = self.prompt_template.format_prompt(**prompt_inputs).to_string()
+        # print(current_prompt_string)
         # print("--- End CodeFixer Prompt Input ---")
 
         try:
             response = await self.chain.ainvoke(prompt_inputs)
             print("--- CodeFixer LLM Raw Response ---")
-            print(response) # Print the raw response for now
+            # Limit printing very long responses to keep logs cleaner
+            if len(response) > 2000:
+                print(response[:1000] + "\n... (response truncated in log) ...\n" + response[-1000:])
+            else:
+                print(response) 
             print("--- End CodeFixer LLM Raw Response ---")
             
-            # Try to extract the last valid diff block
-            # A diff block is ```diff\n...\n```
-            # We look for all such blocks and take the last one that seems valid.
-            diff_blocks = re.findall(r"```diff\n(.*?)\n```", response, re.DOTALL)
-            
-            if not diff_blocks:
-                if response.strip() == "NO_CODE_FIX_POSSIBLE":
-                    return response.strip()
-                print(f"CodeFixer Warning: LLM response did not contain any ```diff ... ``` blocks.")
-                return f"# LLM_RESPONSE_NO_DIFF_BLOCKS\n{response}" # Return raw if no blocks
+            # Basic validation: Check if it's "NO_CODE_FIX_POSSIBLE" or seems to contain our markers
+            response_stripped = response.strip()
+            if response_stripped == "NO_CODE_FIX_POSSIBLE":
+                print("CodeFixer: LLM responded NO_CODE_FIX_POSSIBLE.")
+                return response_stripped
+            # Check for BEGIN/END blocks OR DELETE FILE instructions
+            has_begin_end_markers = "==BEGIN FILE:" in response and "==END FILE:" in response
+            has_delete_marker = "==DELETE FILE:" in response_stripped 
+            # Allow responses that are just a single delete instruction
+            is_single_delete_instruction = has_delete_marker and response_stripped.startswith("==DELETE FILE:") and response_stripped.count('\n') == 0
 
-            # Iterate from the last found block to the first
-            for block_content in reversed(diff_blocks):
-                # A minimal check for a valid diff content
-                if "--- a/" in block_content and "+++ b/" in block_content:
-                    # Reconstruct the block with the markers
-                    extracted_diff = f"```diff\n{block_content.strip()}\n```"
-                    print(f"CodeFixer: Extracted the following diff block:\n{extracted_diff}")
-                    return extracted_diff
-            
-            # If no valid diff block was found among the candidates
-            if response.strip() == "NO_CODE_FIX_POSSIBLE": # Check again in case it was outside blocks
-                return response.strip()
-                
-            print(f"CodeFixer Warning: Found diff blocks, but none seemed valid (missing '--- a/' or '+++ b/').")
-            return f"# LLM_RESPONSE_INVALID_DIFF_BLOCKS\n{response}" # Or return the last block found, or raw response
+
+            if has_begin_end_markers or is_single_delete_instruction:
+                if has_begin_end_markers:
+                    print("CodeFixer: LLM response appears to contain file content blocks.")
+                if is_single_delete_instruction:
+                     print("CodeFixer: LLM response appears to be a single delete file instruction.")
+                # We will return the raw response for app.py to parse into individual files.
+                return response # Return the full response, not just stripped
+            elif has_delete_marker : # has delete marker but not a clean single line or part of begin/end
+                 print("CodeFixer: LLM response appears to contain delete file instruction(s).")
+                 return response # Return the full response
+
+            else:
+                print(f"CodeFixer Warning: LLM response did not conform to expected output structure (NO_CODE_FIX_POSSIBLE, BEGIN/END FILE blocks, or DELETE FILE). Response was: '{response_stripped[:500]}...'")
+                return f"# LLM_RESPONSE_UNEXPECTED_FORMAT\n{response}"
 
         except Exception as e:
             print(f"Error during CodeFixer LLM invocation: {e}")
@@ -326,3 +337,21 @@ Reminder: Your output must be ONLY the diff block(s) or the string `NO_CODE_FIX_
             return "Error during CodeFixer LLM analysis."
         finally:
             print("\n--- End CodeFixer --- \n")
+
+# Example of how RAG snippets should be structured if they contain full file content:
+# relevant_code_snippets = [
+#     {
+#         "file_path": "src/original_file.py",
+#         "chunk_content": "# Content of original_file.py...\nprint('hello')", # This should be the full original content
+#         "similarity": 0.9 # This might be an embedding similarity to the error, not diff similarity
+#     }
+# ]
+
+# It's CRITICAL that the RAG system (supabase_service.search_relevant_code_chunks)
+# is updated to return full file contents for the identified relevant files if this strategy is to work.
+# Otherwise, CodeFixer won't have the original full content to base its modifications on.
+# If RAG returns small chunks, CodeFixer might only be able to rewrite those small chunks,
+# or it might hallucinate the rest of the file, leading to incorrect fixes.
+# The prompt now tells the LLM that RAG snippets are original content.
+# The quality of the "workflow_yaml_content" and "relevant_code_snippets" (especially their completeness)
+# is paramount for the LLM to generate correct full file outputs.

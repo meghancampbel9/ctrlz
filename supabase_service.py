@@ -218,6 +218,52 @@ async def delete_all_chunks_for_repo(repo_id: str):
         print(f"Error deleting chunks for repo {repo_id}: {e}")
         return {"error": str(e)}
 
+async def get_full_file_content_from_chunks(repo_id: str, file_path: str, commit_sha: str) -> str | None:
+    """
+    Retrieves all chunks for a specific file and commit, then reconstructs the full file content.
+    Args:
+        repo_id (str): The repository ID.
+        file_path (str): The path to the file.
+        commit_sha (str): The commit SHA for the version of the file.
+    Returns:
+        str | None: The reconstructed full file content, or None if an error occurs or no chunks are found.
+    """
+    client = get_supabase_client()
+    if not client:
+        print(f"Supabase client not available. Cannot fetch full file for {file_path} in {repo_id}")
+        return None
+
+    try:
+        # It's assumed that chunks are stored in order or can be ordered by their ID
+        # if no explicit order column exists. This might need a schema change for perfect reconstruction.
+        # For now, ordering by 'id' (auto-incrementing primary key) is a common default.
+        # If your 'id' is not guaranteed to be in insertion order, you might need to add an
+        # explicit 'chunk_sequence_number' during indexing.
+        response = client.table("code_chunks") \
+            .select("chunk_content, id") \
+            .eq("repo_id", repo_id) \
+            .eq("file_path", file_path) \
+            .eq("commit_sha", commit_sha) \
+            .order("id", desc=False) \
+            .execute()
+
+        if response.data:
+            # Assuming chunks are now ordered by 'id' which should correspond to their original sequence
+            full_content = "".join([chunk['chunk_content'] for chunk in response.data])
+            print(f"Reconstructed full content for {file_path} (commit {commit_sha}) from {len(response.data)} chunks. Total length: {len(full_content)}")
+            return full_content
+        elif response.error:
+            print(f"Error retrieving chunks for {file_path} (commit {commit_sha}): {response.error}")
+            return None
+        else:
+            print(f"No chunks found for {file_path} (commit {commit_sha}) in repo {repo_id}.")
+            return None
+    except Exception as e:
+        print(f"Unexpected error retrieving/reconstructing file {file_path} (commit {commit_sha}): {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
 # Ensure this is the ONLY if __name__ == '__main__' block and it's at the end of the file.
 if __name__ == '__main__':
     # This is the original main() from your earlier version of supabase_service.py
@@ -304,6 +350,8 @@ class MyClass:
 async def search_relevant_code_chunks(repo_id: str, query_text: str, top_k: int = 5, similarity_threshold: float = 0.5) -> List[Dict[str, Any]]:
     """
     Searches for relevant code chunks in Supabase for a given repository and query.
+    Returns a list of matching CHUNKS. To get full file content, you'll need to use
+    `get_full_file_content_from_chunks` based on the file_path and commit_sha from these results.
 
     Args:
         repo_id (str): The repository ID (e.g., owner/repo_name) to search within.

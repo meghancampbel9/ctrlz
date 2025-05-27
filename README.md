@@ -1,10 +1,43 @@
 # CtrlZ
 GitOps AI assistant acting as CtrlZ for production.
 
+Download the app here: https://github.com/apps/ctrlz-gitops
+
 ## Features
-- Responds to GitHub webhook events (e.g., workflow runs, pull requests)
-- Fetches and stores logs from failed workflow runs in the `/logs` directory
-- Utility to read files from the repository (for future use)
+
+CtrlZ monitors your GitHub repositories and takes action when workflow runs fail. Here's a breakdown of its process:
+
+1.  **Webhook Event Handling:**
+    *   Listens for GitHub webhook events, primarily `workflow_run` (when a run completes with a failure) and `repository` (for initial indexing).
+    *   Also monitors `push` events to the default branch to trigger re-indexing of the repository.
+
+2.  **Log Collection & Storage:**
+    *   Upon a failed `workflow_run`, automatically fetches the detailed logs for that run.
+
+3.  **Automated Log Analysis (`LogAnalyzer` Agent):**
+    *   Processes the collected logs to understand the nature of the error, identify key error messages, and extracts a structured problem statement.
+
+4.  **Contextual Code Retrieval (RAG via Supabase):**
+    *   Uses the problem statement from the log analysis to search for relevant code snippets within the indexed repository (leveraging vector embeddings stored in Supabase).
+    *   Retrieves the full content of the files corresponding to the most relevant code chunks to provide comprehensive context to the fixing agent.
+
+5.  **AI-Powered Code Correction (`CodeFixer` Agent):**
+    *   Combines the structured log analysis and the retrieved relevant code files (RAG context).
+    *   Leverages a Large Language Model (LLM) to understand the problem in context and propose a code fix.
+    *   The agent is designed to output the complete, corrected file content(s) or instructions to delete files.
+
+6.  **Automated Pull Request Generation:**
+    *   If the `CodeFixer` agent generates a viable fix:
+        *   A new branch is created from the commit that triggered the workflow failure.
+        *   The proposed file changes (creations, modifications, or deletions) are committed to this new branch.
+        *   A Pull Request is automatically opened against the repository's default branch.
+        *   The PR description includes details about the original problem (from log analysis), a summary of the fix, and a list of modified/deleted files.
+
+7.  **Repository Indexing (`repository_indexer` & Supabase):**
+    *   When a new repository is added to the app or when the default branch of an existing repository is updated, the `repository_indexer` processes its content.
+    *   Files are chunked, embeddings are generated, and this data is stored in Supabase to enable efficient semantic search for the RAG process.
+
+This automated pipeline aims to quickly address issues, provide developers with a head start on debugging, and reduce the mean time to recovery (MTTR) for production incidents reflected in workflow failures.
 
 ## Install (Python/FastAPI)
 
@@ -46,7 +79,7 @@ You can use [smee.io](https://smee.io/) to receive webhooks locally.
 1 Set the smee channel URL as your webhook URL in your GitHub App settings.
 3. On your local machine, run:
    ```bash
-   npx smee-client --url https://smee.io/your-unique-channel --target http://localhost:8000/api/webhook
+   npx smee-client --url https://smee.io/smee-number --target http://localhost:8000/api/webhook
    ```
 - Now, webhooks will be forwarded from smee.io to your local FastAPI server.
 

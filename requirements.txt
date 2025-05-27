@@ -10,3 +10,9 @@ supabase
 GitPython
 tiktoken
 uvicorn
+dotenv
+uvicorn
+paramiko
+google
+langchain
+langchain_google_genai

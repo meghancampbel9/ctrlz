@@ -141,6 +141,8 @@ logs/
 # Spyder project settings
 .spyderproject
 .spyproject
+.idea
+ubuntu.pem
 
 # Rope project settings
 .ropeproject

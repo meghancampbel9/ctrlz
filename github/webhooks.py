@@ -259,7 +259,7 @@ async def github_webhook_endpoint(
                                     print(f"[WARN] Minor error parsing problem statement for PR body: {e_parse_pr_body}")
                                     pass
 
-                            pr_body_files_list_committed = "\n".join([f"- Modified/Created: `{f}`" for f in committed_paths])
+                            pr_body_files_list_committed = "\n".join([f"- `{f}`" for f in committed_paths])
                             pr_body_files_list_deleted = "\n".join([f"- Deleted: `{f}`" for f in deleted_paths])
                             
                             files_summary_pr = ""
@@ -273,7 +273,7 @@ async def github_webhook_endpoint(
                             pr_body = (
                                 f"This PR contains automated fixes proposed by the CodeFixer agent for a workflow failure on branch `{target_branch_for_fix}` "
                                 f"(triggered by commit `{current_head_sha[:7]}`).\n\n"
-                                f"**Original Problem Statement (from Log Analysis):**\n"
+                                f"**Problem Statement:**\n"
                                 f"> {problem_statement_for_pr.replace('\n', '\n> ')}\n\n"
                                 f"{files_summary_pr}\n\n"
                                 f"Please review the applied changes carefully."

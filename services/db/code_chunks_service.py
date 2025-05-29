@@ -1,7 +1,6 @@
 from typing import List, Dict, Any
 
 from services.core.supabase_client import get_supabase_client # Corrected import
-# Removed: from ..core.embedding_service import get_embeddings_model, EMBEDDING_DIMENSION # Adjusted import
 
 async def store_code_chunks_batch(chunks_data: list[dict]) -> dict:
     """Stores a batch of code chunks in the Supabase table 'code_chunks'."""

@@ -84,7 +84,7 @@ Here are some areas for future development of CtrlZ:
 ## Run the server
 
 ```bash
-uvicorn app:app --host 0.0.0.0 --port 8000
+uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 - The webhook endpoint will be at `http://localhost:8000/api/webhook`.
 
